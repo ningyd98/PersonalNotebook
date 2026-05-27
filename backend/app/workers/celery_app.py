@@ -1,18 +1,18 @@
 """
-Celery Worker — 真实文档导入 DAG
+Celery Worker — 真实文档导入 DAG (Phase 1.6 修复)
 
-任务 DAG (7 步):
-  detecting → extracting → parsing → chunking → embedding → indexing → checking → completed
+状态规范:
+  job.status ∈ {PENDING, RUNNING, RETRYING, SUCCESS, FAILED, CANCELLED}
+  job.phase ∈ {detecting, parsing, chunking, embedding, indexing, checking}
 
-关键修复 (Phase 1.5):
-  - 不传临时文件路径，只传 document_id/kb_id
-  - worker 从 MinIO 下载原始文件到临时目录
-  - 导入 parsers 触发注册
-  - document_id 使用真实数据库 UUID
-  - Qdrant 维度不匹配时报错而非重建 collection
-  - 使用同步 create_engine + Session
+文档状态机 (DocStateMachine):
+  UPLOADED → PARSING → PARSED → CHUNKING → EMBEDDING → INDEXING → READY
+
+双缓冲 reindex:
+  保留旧 version，新建 version={doc.document_version+1}，校验后切换 active_version
 """
 
+import asyncio
 import os
 import sys
 import tempfile
@@ -48,36 +48,45 @@ celery_app.conf.update(
     task_time_limit=900,
 )
 
-# 触发所有 parser 注册
-import app.services.parsers  # noqa: E402
+import app.services.parsers  # noqa: E402 — 触发 parser 注册
 
 
+# ─── helpers ──────────────────────────────────────────────
 def _get_sync_session():
-    """获取同步数据库会话"""
     from sqlalchemy import create_engine
     from sqlalchemy.orm import Session
-    engine = create_engine(
-        settings.DATABASE_URL_SYNC,
-        pool_size=5, max_overflow=10, pool_pre_ping=True,
-    )
+    engine = create_engine(settings.DATABASE_URL_SYNC, pool_size=5, max_overflow=10, pool_pre_ping=True)
     return Session(engine)
 
 
-def _update_job(db, job_id, status, progress, **kwargs):
+def _update_job(db, job_id, status, progress, phase=None, **kwargs):
+    """
+    job.status 只允许 PENDING|RUNNING|RETRYING|SUCCESS|FAILED|CANCELLED
+    job.phase 记录详细步骤: detecting|parsing|chunking|embedding|indexing|checking
+    """
     from app.models.models import IngestJob
     job = db.get(IngestJob, job_id)
     if not job:
         return
     job.status = status
     job.progress = progress
+    if phase:
+        job.phase = phase
     for k, v in kwargs.items():
         if hasattr(job, k):
             setattr(job, k, v)
     db.commit()
 
 
+def _transition_doc(db, doc, new_state, reason=None):
+    from app.services.document_state import DocStateMachine
+    ok = DocStateMachine.transition(doc, new_state, reason=reason)
+    if ok:
+        db.commit()
+    return ok
+
+
 def _download_from_minio(storage_path: str) -> str:
-    """从 MinIO/Local 下载文件到临时目录，返回路径"""
     from app.services.storage import minio_storage
     prefix = f"minio://{settings.MINIO_BUCKET}/"
     if not storage_path.startswith(prefix):
@@ -93,27 +102,28 @@ def _download_from_minio(storage_path: str) -> str:
     return tmp.name
 
 
+# ─── ingest — 7-step DAG (status/phase 分离) ────────────
 @celery_app.task(bind=True, name="ingest_document")
 def ingest_document(self, document_id: str, kb_id: str, options: dict = None):
-    """
-    完整文档导入任务。
-    只接收 document_id 和 kb_id，worker 从 MinIO 下载文件。
-    """
     options = options or {}
     db = _get_sync_session()
     job_id = self.request.id
     warnings: list[str] = []
     tmp_path = None
+    version = int(options.get("version", 0))
+    is_reindex = bool(options.get("reindex", False))
 
     try:
         from app.models.models import Document, DocumentBlock, DocumentChunk
+        from app.services.document_state import DocStateMachine
 
         doc = db.get(Document, document_id)
         if not doc:
             raise ValueError(f"Document not found: {document_id}")
 
-        # Step 1: detecting (5%)
-        _update_job(db, job_id, "detecting", 5, started_at=datetime.utcnow())
+        # ── Step 1: detecting ──────────────────────────
+        _update_job(db, job_id, status="RUNNING", progress=5, phase="detecting", started_at=datetime.utcnow())
+        _transition_doc(db, doc, "PARSING", "ingest start")
 
         mime_type = doc.mime_type
         ext = Path(doc.filename).suffix
@@ -124,8 +134,8 @@ def ingest_document(self, document_id: str, kb_id: str, options: dict = None):
         doc.file_type = ext.lstrip(".")
         db.commit()
 
-        # Step 2: Download + Parse (50%)
-        _update_job(db, job_id, "parsing", 15)
+        # ── Step 2: parse ──────────────────────────────
+        _update_job(db, job_id, status="RUNNING", progress=15, phase="parsing")
         tmp_path = _download_from_minio(doc.storage_path)
 
         from app.services.parsers.base import ParserRegistry
@@ -136,24 +146,23 @@ def ingest_document(self, document_id: str, kb_id: str, options: dict = None):
         try:
             udr = parser.parse(tmp_path, options)
         except Exception as parse_err:
-            logger.warning(f"Primary parser failed: {parse_err}, trying fallback")
+            logger.warning(f"Primary parser failed: {parse_err}")
             from app.services.parsers.fallback_parser import FallbackParser
             udr = FallbackParser().parse(tmp_path, options)
-            warnings.append(f"Primary parser failed: {str(parse_err)}. Used fallback.")
+            warnings.append(f"Parser fallback: {str(parse_err)}")
 
-        # Override document_id with real DB UUID
         udr.document_id = str(doc.id)
-
         doc.title = udr.metadata.get("title", doc.filename)
         doc.author = udr.metadata.get("author", "")
         doc.metadata_json = udr.metadata
         doc.parse_status = "parsing"
+        _transition_doc(db, doc, "PARSED", "parse complete")
         db.commit()
 
         # Write blocks
         block_count = 0
         for block in udr.blocks:
-            db_block = DocumentBlock(
+            db.add(DocumentBlock(
                 document_id=doc.id, block_type=block.type, text=block.text,
                 structured_json=block.structured_data,
                 page_number=block.page, slide_number=block.slide,
@@ -161,13 +170,14 @@ def ingest_document(self, document_id: str, kb_id: str, options: dict = None):
                 start_time=block.start_time, end_time=block.end_time,
                 bbox_json=block.bbox, section_path=block.section_path,
                 metadata_json=block.metadata,
-            )
-            db.add(db_block)
+            ))
             block_count += 1
         db.commit()
 
-        # Step 3: chunking (50%)
-        _update_job(db, job_id, "chunking", 45)
+        # ── Step 3: chunking ───────────────────────────
+        _update_job(db, job_id, status="RUNNING", progress=45, phase="chunking")
+        _transition_doc(db, doc, "CHUNKING", "chunking start")
+
         from app.services.chunking.chunker import ChunkingService
         chunker = ChunkingService(
             chunk_size=options.get("chunk_size", settings.CHUNK_SIZE),
@@ -175,9 +185,10 @@ def ingest_document(self, document_id: str, kb_id: str, options: dict = None):
         )
         chunks = chunker.chunk_udr(udr)
 
-        # Step 4: embedding (70%)
-        _update_job(db, job_id, "embedding", 55)
-        import asyncio
+        # ── Step 4: embedding ──────────────────────────
+        _update_job(db, job_id, status="RUNNING", progress=55, phase="embedding")
+        _transition_doc(db, doc, "EMBEDDING", "embedding start")
+
         from app.services.embedding import EmbeddingService
         emb_service = EmbeddingService(model=options.get("embedding_model", settings.DEFAULT_EMBEDDING))
         batch_size = 32
@@ -193,11 +204,12 @@ def ingest_document(self, document_id: str, kb_id: str, options: dict = None):
                 warnings.append(f"Embedding error: {str(e)}")
                 all_vectors.extend([[0.0] * settings.QDRANT_VECTOR_SIZE] * len(batch))
             pct = 55 + int((i + len(batch)) / len(all_texts) * 15)
-            _update_job(db, job_id, "embedding", min(pct, 70))
+            _update_job(db, job_id, status="RUNNING", progress=min(pct, 70), phase="embedding")
 
         for i, chunk_data in enumerate(chunks):
             chunk_data["embedding"] = all_vectors[i] if i < len(all_vectors) else []
-            db_chunk = DocumentChunk(
+            cversion = version if version > 0 else (doc.document_version or 1)
+            db.add(DocumentChunk(
                 document_id=doc.id, kb_id=kb_id, chunk_index=i,
                 content=chunk_data["content"],
                 content_hash=chunk_data.get("content_hash", ""),
@@ -207,32 +219,34 @@ def ingest_document(self, document_id: str, kb_id: str, options: dict = None):
                 page_number=chunk_data.get("page_number"),
                 slide_number=chunk_data.get("slide_number"),
                 section_path=chunk_data.get("section_path"),
-            )
-            db.add(db_chunk)
+                version_id=cversion,
+            ))
         db.commit()
         doc.parse_status = "parsed"
-        db.commit()
 
-        # Step 5: indexing — Qdrant (85%)
-        _update_job(db, job_id, "indexing", 75)
+        # ── Step 5: indexing ───────────────────────────
+        _update_job(db, job_id, status="RUNNING", progress=75, phase="indexing")
+        _transition_doc(db, doc, "INDEXING", "indexing start")
+
         from app.services.qdrant_store import QdrantService
         qdrant = QdrantService()
 
-        # Validate dimension — NEVER recreate collection
         if all_vectors and len(all_vectors[0]) != qdrant.vector_size:
-            error_msg = (
-                f"Vector dimension mismatch: got {len(all_vectors[0])}d, "
-                f"Qdrant collection expects {qdrant.vector_size}d. "
-                f"Update QDRANT_VECTOR_SIZE={len(all_vectors[0])} in .env and restart."
-            )
-            logger.error(error_msg)
-            _update_job(db, job_id, "failed", 75, error_message=error_msg, finished_at=datetime.utcnow())
-            doc.parse_status = "failed"
-            db.commit()
+            err = (f"Vector dim mismatch: got {len(all_vectors[0])}d, "
+                   f"expected {qdrant.vector_size}d. Update QDRANT_VECTOR_SIZE.")
+            logger.error(err)
+            _update_job(db, job_id, status="FAILED", progress=75, phase="indexing",
+                         error_message=err, finished_at=datetime.utcnow())
+            _transition_doc(db, doc, "FAILED", err)
             db.close()
-            return {"status": "failed", "error": error_msg}
+            return {"status": "FAILED", "error": err}
 
         try:
+            cversion = version if version > 0 else (doc.document_version or 1)
+            for c in chunks:
+                c["version_id"] = cversion
+                c["tenant_id"] = "default"
+                c["chunk_id"] = str(c.get("chunk_id", ""))
             eids = asyncio.new_event_loop().run_until_complete(qdrant.upsert_chunks(chunks, kb_id))
             chunk_objs = db.query(DocumentChunk).filter(
                 DocumentChunk.document_id == doc.id
@@ -249,8 +263,8 @@ def ingest_document(self, document_id: str, kb_id: str, options: dict = None):
             doc.index_status = "failed"
             db.commit()
 
-        # Step 6: checking (95%)
-        _update_job(db, job_id, "checking", 90)
+        # ── Step 6: checking + version switch ──────────
+        _update_job(db, job_id, status="RUNNING", progress=90, phase="checking")
         block_cnt = db.query(DocumentBlock).filter(DocumentBlock.document_id == doc.id).count()
         chunk_cnt = db.query(DocumentChunk).filter(DocumentChunk.document_id == doc.id).count()
         quality_report = {
@@ -264,33 +278,47 @@ def ingest_document(self, document_id: str, kb_id: str, options: dict = None):
         }
         doc.metadata_json = doc.metadata_json or {}
         doc.metadata_json["quality_report"] = quality_report
+
         if doc.index_status == "failed":
             doc.parse_status = "partially_completed"
-        elif warnings:
-            doc.parse_status = "partially_completed"
+            _transition_doc(db, doc, "FAILED", "indexing failed")
         else:
+            # 成功 → 切换 active_version
+            new_version = version if version > 0 else (doc.document_version or 1)
+            doc.active_version = new_version
             doc.parse_status = "completed"
+            doc.embed_status = "completed"
+            _transition_doc(db, doc, "READY", f"active_version={new_version}")
+
+            # 如果旧版本存在，标记 is_active=False（延迟清理）
+            try:
+                _deactivate_old_version(qdrant, str(doc.id), new_version)
+            except Exception as e:
+                logger.warning(f"Failed to deactivate old version: {e}")
+                warnings.append(f"version_deactivate_error: {e}")
+
         doc.embed_status = "completed" if doc.index_status != "failed" else "failed"
         db.commit()
 
-        # Step 7: completed
-        _update_job(db, job_id, "completed", 100, finished_at=datetime.utcnow(),
+        # ── Step 7: done ───────────────────────────────
+        _update_job(db, job_id, status="SUCCESS", progress=100, phase="completed",
+                     finished_at=datetime.utcnow(),
                      warnings_json=warnings if warnings else None)
 
-        return {"status": "completed", "document_id": document_id,
+        return {"status": "SUCCESS", "document_id": document_id,
                 "block_count": block_cnt, "chunk_count": chunk_cnt, "warnings": warnings}
 
     except Exception as e:
         tb = traceback.format_exc()
         logger.error(f"Ingest failed [{document_id}]: {e}\n{tb}")
-        _update_job(db, job_id, "failed", 0,
+        _update_job(db, job_id, status="FAILED", progress=0, phase="failed",
                      error_message=str(e), finished_at=datetime.utcnow())
         try:
             from app.models.models import Document
             d = db.get(Document, document_id)
             if d:
                 d.parse_status = "failed"
-                db.commit()
+                _transition_doc(d, "FAILED", str(e)[:200])
         except Exception:
             pass
         raise
@@ -303,36 +331,78 @@ def ingest_document(self, document_id: str, kb_id: str, options: dict = None):
                 pass
 
 
+def _deactivate_old_version(qdrant, document_id: str, new_version: int):
+    """将 Qdrant 中旧版本标记为 is_active=False"""
+    from qdrant_client.http import models as qm
+    try:
+        qdrant.client.set_payload(
+            collection_name=qdrant.collection_name,
+            payload={"is_active": False},
+            points=qm.FilterSelector(
+                filter=qm.Filter(must=[
+                    qm.FieldCondition(key="document_id", match=qm.MatchValue(value=document_id)),
+                ])
+            ),
+        )
+        qdrant.client.set_payload(
+            collection_name=qdrant.collection_name,
+            payload={"is_active": True},
+            points=qm.FilterSelector(
+                filter=qm.Filter(must=[
+                    qm.FieldCondition(key="document_id", match=qm.MatchValue(value=document_id)),
+                    qm.FieldCondition(key="version_id", match=qm.MatchValue(value=new_version)),
+                ])
+            ),
+        )
+    except Exception:
+        pass
+
+
+# ─── reparse — 真正双缓冲 ───────────────────────────────
 @celery_app.task(bind=True, name="reparse_document")
 def reparse_document(self, document_id: str, kb_id: str, options: dict = None):
-    """重新解析 — 清理旧数据后重新 ingest（只传 document_id/kb_id）"""
+    """
+    双缓冲重新索引:
+    a) 保留旧 version 继续服务
+    b) 新建 new_version = document_version + 1
+    c) 新 blocks/chunks/vector 带 version_id=new_version
+    d) 成功 → active_version=new_version, 旧版本延迟清理
+    e) 失败 → 旧 active_version 继续可用
+    """
+    options = options or {}
     db = _get_sync_session()
     try:
-        from app.models.models import Document, DocumentBlock, DocumentChunk, IngestJob
-        from app.services.qdrant_store import QdrantService
-
-        db.query(DocumentBlock).filter(DocumentBlock.document_id == document_id).delete()
-        db.query(DocumentChunk).filter(DocumentChunk.document_id == document_id).delete()
-        try:
-            QdrantService().delete_by_document(document_id)
-        except Exception as e:
-            logger.warning(f"Qdrant cleanup failed: {e}")
+        from app.models.models import Document, IngestJob
 
         doc = db.get(Document, document_id)
-        if doc:
-            doc.parse_status = "pending"
-            doc.embed_status = "pending"
-            doc.index_status = "pending"
-            doc.document_version = (doc.document_version or 0) + 1
-            db.commit()
+        if not doc:
+            raise ValueError(f"Document not found: {document_id}")
 
-        job = IngestJob(kb_id=kb_id, document_id=document_id,
-                         job_type="reparse", status="pending")
+        # 计算新版本号
+        new_version = (doc.document_version or 0) + 1
+        doc.document_version = new_version
+        doc.status = "REINDEXING"
+        doc.parse_status = "pending"
+        doc.embed_status = "pending"
+        doc.index_status = "pending"
+        db.commit()
+
+        # 创建 job
+        job = IngestJob(
+            kb_id=kb_id, document_id=document_id,
+            job_type="reparse", status="PENDING",
+        )
         db.add(job)
         db.commit()
 
-        # 只传 document_id 和 kb_id，不传 file_path
-        ingest_document.apply_async(args=[document_id, kb_id, options], task_id=str(job.id))
-        return {"status": "submitted", "job_id": str(job.id), "document_id": document_id}
+        # 将 version 传入 options，ingest 会据此写 chunk/Qdrant
+        reindex_options = {**options, "version": new_version, "reindex": True}
+        ingest_document.apply_async(
+            args=[document_id, kb_id, reindex_options],
+            task_id=str(job.id),
+        )
+
+        return {"status": "PENDING", "job_id": str(job.id),
+                "document_id": document_id, "new_version": new_version}
     finally:
         db.close()

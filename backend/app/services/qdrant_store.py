@@ -81,6 +81,7 @@ class QdrantService:
                 "version_id": chunk.get("version_id", 1),
                 "tenant_id": chunk.get("tenant_id", "default"),
                 "chunk_id": str(chunk.get("chunk_id", "")),
+                "is_active": True,
             }
 
             points.append(
@@ -125,6 +126,13 @@ class QdrantService:
                     match=qdrant_models.MatchValue(value=str(tenant_id)),
                 )
             )
+        # Filter: only active version chunks (is_active != False)
+        must_conditions.append(
+            qdrant_models.FieldCondition(
+                key="is_active",
+                match=qdrant_models.MatchExcept(value=False),
+            )
+        )
 
         results = self.client.search(
             collection_name=self.collection_name,

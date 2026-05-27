@@ -70,35 +70,40 @@ def check_index_consistency(kb_id: str, db: Session) -> ConsistencyReport:
         DocumentChunk.version_id > 0,
     ).scalar() or 0
 
-    # 3. Count vectors in Qdrant for this kb_id
+    # 3. Paginated scroll all Qdrant points for this kb
     try:
         qdrant.ensure_collection()
-        # Scroll through all points with kb_id filter
-        scroll_result = qdrant.client.scroll(
-            collection_name=qdrant.collection_name,
-            scroll_filter=qdrant_models.Filter(
-                must=[
-                    qdrant_models.FieldCondition(
-                        key="kb_id",
-                        match=qdrant_models.MatchValue(value=str(kb_id)),
-                    )
-                ]
-            ),
-            limit=10000,
-            with_payload=True,
-            with_vectors=False,
-        )
-        qdrant_points = scroll_result[0]
+        qdrant_filter = qdrant_models.Filter(must=[
+            qdrant_models.FieldCondition(key="kb_id", match=qdrant_models.MatchValue(value=str(kb_id))),
+        ])
+        qdrant_points = []
+        offset = None
+        while True:
+            scroll_result = qdrant.client.scroll(
+                collection_name=qdrant.collection_name,
+                scroll_filter=qdrant_filter,
+                limit=1000,
+                offset=offset,
+                with_payload=True,
+                with_vectors=False,
+            )
+            batch, next_offset = scroll_result
+            qdrant_points.extend(batch)
+            if next_offset is None:
+                break
+            offset = next_offset
         report.total_vectors_in_qdrant = len(qdrant_points)
 
-        # 4. Build sets for comparison
-        db_chunk_ids = set()
-        db_chunks = db.query(DocumentChunk.embedding_id, DocumentChunk.id, DocumentChunk.version_id).filter(
+        # 4. Build sets for comparison — check active_version awareness
+        db_active_chunks = db.query(
+            DocumentChunk.embedding_id, DocumentChunk.id, DocumentChunk.version_id
+        ).join(Document, DocumentChunk.document_id == Document.id).filter(
             DocumentChunk.kb_id == kb_id,
             DocumentChunk.embedding_id.isnot(None),
-            DocumentChunk.version_id > 0,
+            Document.active_version == DocumentChunk.version_id,
+            Document.status == "READY",
         ).all()
-        db_eid_to_chunk = {c.embedding_id: c for c in db_chunks}
+        db_eid_to_chunk = {c.embedding_id: c for c in db_active_chunks}
         db_chunk_ids = set(db_eid_to_chunk.keys())
 
         qdrant_point_ids = {str(p.id) for p in qdrant_points}
@@ -176,7 +181,7 @@ def repair_index(kb_id: str, db: Session, dry_run: bool = True) -> dict:
             logger.error(f"Failed to delete orphans: {e}")
             actions.append(f"orphan_delete_failed: {e}")
 
-    # 2. Mark documents with missing vectors as FAILED_NEED_REINDEX
+    # 2. Mark docs with missing vectors as FAILED_NEED_REINDEX
     if report.missing_vectors:
         affected_chunks = db.query(DocumentChunk).filter(
             DocumentChunk.embedding_id.in_(report.missing_vectors)
@@ -187,15 +192,54 @@ def repair_index(kb_id: str, db: Session, dry_run: bool = True) -> dict:
             if doc:
                 doc.status = "FAILED"
                 doc.metadata_json = doc.metadata_json or {}
+                doc.metadata_json["need_reindex"] = True
                 doc.metadata_json["repair_note"] = (
                     f"Missing {sum(1 for c in affected_chunks if str(c.document_id) == doc_id)} vectors"
                 )
                 db.commit()
-                actions.append(f"marked_{doc_id}_failed")
-                logger.info(f"Marked doc {doc_id} as FAILED (missing vectors)")
+                actions.append(f"marked_{doc_id}_FAILED_NEED_REINDEX")
+                logger.info(f"Marked doc {doc_id} as FAILED_NEED_REINDEX")
+
+                # Try re-embed + rewrite missing vectors
+                doc_chunks = [c for c in affected_chunks if str(c.document_id) == doc_id]
+                if doc_chunks:
+                    _try_rewrite_missing(db, qdrant, kb_id, doc_chunks, actions)
 
     return {
         "dry_run": False,
         "report": report.to_dict(),
         "actions": actions,
     }
+
+
+def _try_rewrite_missing(db, qdrant, kb_id, chunks, actions):
+    """尝试为缺失 chunk 重新 embedding 并写入 Qdrant"""
+    import asyncio
+    try:
+        from app.services.embedding import EmbeddingService
+        emb = EmbeddingService()
+        texts = [c.content for c in chunks if c.content]
+        if not texts:
+            return
+        vectors = asyncio.new_event_loop().run_until_complete(emb.embed_texts(texts))
+        payload_chunks = []
+        for i, c in enumerate(chunks):
+            if i >= len(vectors):
+                break
+            payload_chunks.append({
+                "embedding": vectors[i], "document_id": str(c.document_id),
+                "chunk_index": c.chunk_index, "content": c.content or "",
+                "content_hash": c.content_hash or "", "version_id": c.version_id or 1,
+                "tenant_id": "default", "chunk_id": str(c.id),
+            })
+        if payload_chunks:
+            eids = asyncio.new_event_loop().run_until_complete(qdrant.upsert_chunks(payload_chunks, kb_id))
+            for i, c in enumerate(chunks):
+                if i < len(eids):
+                    c.embedding_id = eids[i]
+            db.commit()
+            actions.append(f"rewrote_{len(eids)}_vectors")
+            logger.info(f"Rewrote {len(eids)} missing vectors")
+    except Exception as e:
+        actions.append(f"rewrite_failed: {e}")
+        logger.warning(f"Vector rewrite failed: {e}")

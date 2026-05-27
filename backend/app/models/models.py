@@ -363,9 +363,8 @@ class IngestJob(Base, UUIDMixin, TimestampMixin):
     )
     job_type: Mapped[str] = mapped_column(String(50), nullable=False)
     status: Mapped[str] = mapped_column(
-        Enum("PENDING", "RUNNING", "RETRYING", "SUCCESS", "FAILED", "CANCELLED",
-             name="job_status_phase16_enum"),
-        default="PENDING", nullable=False,
+        String(30), default="PENDING", nullable=False,
+        doc="PENDING|RUNNING|RETRYING|SUCCESS|FAILED|CANCELLED"
     )
     phase: Mapped[Optional[str]] = mapped_column(
         String(30), nullable=True,

@@ -42,6 +42,10 @@ def upgrade() -> None:
     op.add_column("ingest_jobs", sa.Column("idempotency_key", sa.String(128), nullable=True))
     op.create_index("ix_ingest_jobs_idempotency_key", "ingest_jobs", ["idempotency_key"])
 
+    # Drop old enum types if they exist (clean migration)
+    op.execute("DROP TYPE IF EXISTS job_status_enum CASCADE")
+    op.execute("DROP TYPE IF EXISTS job_status_phase16_enum CASCADE")
+
     # eval_cases: add evaluation result fields
     op.add_column("eval_cases", sa.Column("model_answer", sa.Text(), nullable=True))
     op.add_column("eval_cases", sa.Column("retrieval_results_json", postgresql.JSON(), nullable=True))

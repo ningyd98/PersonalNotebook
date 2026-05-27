@@ -157,7 +157,8 @@ class RefusalEngine:
     """多因子低置信拒答引擎"""
 
     LOW_CONFIDENCE_THRESHOLD = 0.15
-    MIN_EVIDENCE_COUNT = 1
+    MIN_EVIDENCE_COUNT = 2
+    MIN_CITATION_COVERAGE = 0.6
 
     @classmethod
     def evaluate(
@@ -186,8 +187,8 @@ class RefusalEngine:
             reasons.append(f"insufficient_evidence: 仅 {len(evidences)} 条证据")
 
         # Factor 4: Citation coverage too low
-        if citation_coverage < 0.3 and len(evidences) >= cls.MIN_EVIDENCE_COUNT:
-            reasons.append(f"low_citation_coverage: 引用覆盖率 {citation_coverage:.1%} < 30%")
+        if citation_coverage < cls.MIN_CITATION_COVERAGE and len(evidences) >= cls.MIN_EVIDENCE_COUNT:
+            reasons.append(f"low_citation_coverage: 引用覆盖率 {citation_coverage:.1%} < {cls.MIN_CITATION_COVERAGE:.0%}")
 
         # Factor 5: Type mismatch (query vs evidence)
         if evidence_pack.query_type in ("table", "code") and all(
@@ -213,47 +214,52 @@ class RefusalEngine:
 
 
 class ClaimVerifier:
-    """Claim 级引用覆盖率校验"""
+    """Claim 级引用覆盖率校验 — 支持中文 bigram"""
 
     @staticmethod
     def extract_claims(text: str) -> list[str]:
-        """将回答拆解为 claims"""
-        # Split by Chinese/English sentence boundaries
         claims = re.split(r"(?<=[。！？.!?])\s*", text)
         return [c.strip() for c in claims if c.strip() and len(c.strip()) > 5]
 
     @staticmethod
+    def _tokenize(t: str) -> set[str]:
+        """中文 bigram + 英文 word split 混合分词"""
+        tokens = set()
+        # Chinese char bigrams
+        chinese = re.findall(r"[\u4e00-\u9fff]+", t)
+        for seg in chinese:
+            for i in range(len(seg) - 1):
+                tokens.add(seg[i:i + 2])
+            tokens.add(seg)  # full seg too
+        # English words
+        english = re.findall(r"[a-zA-Z0-9]+", t)
+        for w in english:
+            tokens.add(w.lower())
+        return tokens
+
+    @staticmethod
     def verify_claim(claim: str, evidences: list[Evidence]) -> Optional[Evidence]:
-        """检查一个 claim 是否被至少一个 evidence 支持"""
-        claim_words = set(claim.lower().split())
+        claim_tokens = ClaimVerifier._tokenize(claim)
+        if not claim_tokens:
+            return None
         for ev in evidences:
-            ev_words = set(ev.content.lower().split())
-            overlap = len(claim_words & ev_words)
-            if overlap >= 3:  # At least 3 common words
-                if len(claim_words) > 0:
-                    ratio = overlap / len(claim_words)
-                    if ratio >= 0.2:
-                        return ev
+            ev_tokens = ClaimVerifier._tokenize(ev.content)
+            overlap = len(claim_tokens & ev_tokens)
+            if overlap >= 3:
+                ratio = overlap / len(claim_tokens)
+                if ratio >= 0.3:
+                    return ev
         return None
 
     @classmethod
     def compute_coverage(
         cls, answer: str, evidences: list[Evidence]
     ) -> tuple[float, list[str], list[str]]:
-        """
-        Returns: (coverage_ratio, supported_claims, unsupported_claims)
-        """
         claims = cls.extract_claims(answer)
         if not claims:
             return 0.0, [], []
-
-        supported = []
-        unsupported = []
+        supported, unsupported = [], []
         for claim in claims:
-            if cls.verify_claim(claim, evidences):
-                supported.append(claim)
-            else:
-                unsupported.append(claim)
-
+            (supported if cls.verify_claim(claim, evidences) else unsupported).append(claim)
         coverage = len(supported) / len(claims) if claims else 0.0
         return coverage, supported, unsupported
