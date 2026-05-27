@@ -270,12 +270,10 @@ def ingest_document(self, document_id: str, kb_id: str, options: dict = None):
                     "chunk_id": str(dc.id),
                 })
             eids = asyncio.new_event_loop().run_until_complete(qdrant.upsert_chunks(qdrant_chunks, kb_id))
-            chunk_objs = db.query(DocumentChunk).filter(
-                DocumentChunk.document_id == doc.id
-            ).order_by(DocumentChunk.chunk_index).all()
-            for i, co in enumerate(chunk_objs):
+            # 回填 embedding_id — 只更新当前 version 的 chunks
+            for i, dc in enumerate(db_chunks):
                 if i < len(eids):
-                    co.embedding_id = eids[i]
+                    dc.embedding_id = eids[i]
             db.commit()
             doc.index_status = "indexed"
             db.commit()
@@ -354,41 +352,50 @@ def ingest_document(self, document_id: str, kb_id: str, options: dict = None):
 
 
 def _deactivate_old_version(qdrant, document_id: str, new_version: int):
-    """先标记 new_version is_active=True，再标记 version_id != new_version 为 is_active=False"""
+    """先确认 new_version 激活，再 scroll + PointIdsList 关闭旧版本"""
     from qdrant_client.http import models as qm
-    try:
-        # Step 1: Ensure new version vectors are active
-        qdrant.client.set_payload(
-            collection_name=qdrant.collection_name,
-            payload={"is_active": True},
-            points=qm.FilterSelector(
-                filter=qm.Filter(must=[
-                    qm.FieldCondition(key="document_id", match=qm.MatchValue(value=document_id)),
-                    qm.FieldCondition(key="version_id", match=qm.MatchValue(value=new_version)),
-                ])
-            ),
-        )
-        logger.info(f"Activated version {new_version} for doc {document_id}")
-    except Exception as e:
-        logger.warning(f"Failed to activate new_version={new_version} for doc {document_id}: {e}")
-        raise
 
-    try:
-        # Step 2: Deactivate old versions (version_id != new_version)
+    # Step 1: Ensure new version vectors are active
+    qdrant.client.set_payload(
+        collection_name=qdrant.collection_name,
+        payload={"is_active": True},
+        points=qm.FilterSelector(
+            filter=qm.Filter(must=[
+                qm.FieldCondition(key="document_id", match=qm.MatchValue(value=document_id)),
+                qm.FieldCondition(key="version_id", match=qm.MatchValue(value=new_version)),
+            ])
+        ),
+    )
+    logger.info(f"Activated version {new_version} for doc {document_id}")
+
+    # Step 2: Scroll all points for this document, filter old version IDs
+    all_points = []
+    offset = None
+    while True:
+        batch, next_offset = qdrant.client.scroll(
+            collection_name=qdrant.collection_name,
+            scroll_filter=qm.Filter(must=[
+                qm.FieldCondition(key="document_id", match=qm.MatchValue(value=document_id)),
+            ]),
+            limit=1000, offset=offset,
+            with_payload=True, with_vectors=False,
+        )
+        all_points.extend(batch)
+        if next_offset is None:
+            break
+        offset = next_offset
+
+    old_point_ids = [
+        p.id for p in all_points
+        if (p.payload or {}).get("version_id") != new_version
+    ]
+    if old_point_ids:
         qdrant.client.set_payload(
             collection_name=qdrant.collection_name,
             payload={"is_active": False},
-            points=qm.FilterSelector(
-                filter=qm.Filter(must=[
-                    qm.FieldCondition(key="document_id", match=qm.MatchValue(value=document_id)),
-                    qm.FieldCondition(key="version_id", match=qm.MatchExcept(value=new_version)),
-                ])
-            ),
+            points=qm.PointIdsList(points=old_point_ids),
         )
-        logger.info(f"Deactivated old versions for doc {document_id} (kept v{new_version})")
-    except Exception as e:
-        logger.warning(f"Failed to deactivate old versions for doc {document_id}: {e}")
-        raise
+        logger.info(f"Deactivated {len(old_point_ids)} old-version points for doc {document_id}")
 
 
 # ─── reparse — 真正双缓冲 ───────────────────────────────
