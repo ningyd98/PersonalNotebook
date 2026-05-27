@@ -7,16 +7,30 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Optional
 
-from pydantic_settings import BaseSettings
+from pydantic import field_validator
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
     """应用全局配置"""
 
+    model_config = SettingsConfigDict(
+        env_file=".env", env_file_encoding="utf-8", case_sensitive=True
+    )
+
     # -------------------- 项目 --------------------
     PROJECT_NAME: str = "Personal-KB"
     ENVIRONMENT: str = "development"
     DEBUG: bool = True
+
+    @field_validator("DEBUG", mode="before")
+    @classmethod
+    def parse_debug(cls, v: object) -> bool:
+        if isinstance(v, bool):
+            return v
+        if isinstance(v, str):
+            return v.lower() in ("true", "1", "yes", "on")
+        return bool(v)
     SECRET_KEY: str = "change-me-to-a-random-string-at-least-32-chars"
 
     # -------------------- 数据库 PostgreSQL --------------------
@@ -100,11 +114,6 @@ class Settings(BaseSettings):
 
     # -------------------- 路径 --------------------
     BASE_DIR: Path = Path(__file__).resolve().parent.parent.parent
-
-    class Config:
-        env_file = ".env"
-        env_file_encoding = "utf-8"
-        case_sensitive = True
 
 
 @lru_cache()

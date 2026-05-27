@@ -53,14 +53,14 @@ class QdrantService:
             if not vector:
                 continue
 
-            # 如果 vector_size 不匹配，跳过
+            # NEVER recreate collection — dimension mismatch is a fatal config error
             if len(vector) != self.vector_size:
-                logger.warning(
-                    f"Vector size mismatch: expected {self.vector_size}, got {len(vector)}. Updating vector_size."
+                logger.error(
+                    f"Vector dimension mismatch: got {len(vector)}d, expected {self.vector_size}d. "
+                    f"Update QDRANT_VECTOR_SIZE in .env to match your embedding model, then restart. "
+                    f"Skipping this vector."
                 )
-                # 动态更新 vector_size
-                self.vector_size = len(vector)
-                self._recreate_collection()
+                continue
 
             eid = str(uuid.uuid4())
             embedding_ids.append(eid)
@@ -157,16 +157,4 @@ class QdrantService:
         except Exception as e:
             logger.warning(f"Failed to delete vectors for document {document_id}: {e}")
 
-    def _recreate_collection(self) -> None:
-        """重建 collection（更新 vector_size）"""
-        try:
-            self.client.delete_collection(self.collection_name)
-        except Exception:
-            pass
-        self.client.create_collection(
-            collection_name=self.collection_name,
-            vectors_config=qdrant_models.VectorParams(
-                size=self.vector_size,
-                distance=qdrant_models.Distance.COSINE,
-            ),
-        )
+

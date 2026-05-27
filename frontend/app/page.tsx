@@ -58,10 +58,12 @@ export default function DashboardPage() {
           recentConversations = convs.total || 0;
         } catch {}
 
-        // Model status
+        // Model status — use model-gateway directly, not via backend
         let modelStatus = "未连接";
         try {
-          const ms = await apiFetch("/model/status");
+          const gwUrl = process.env.NEXT_PUBLIC_MODEL_GATEWAY_URL || "http://localhost:8900";
+          const resp = await fetch(`${gwUrl}/model/status`);
+          const ms = await resp.json();
           const providers = ms.providers || [];
           const okProviders = providers.filter((p: any) => p.status === "ok");
           modelStatus = okProviders.length > 0

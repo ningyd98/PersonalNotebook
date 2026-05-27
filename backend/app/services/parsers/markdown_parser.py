@@ -61,99 +61,115 @@ class MarkdownParser(BaseParser):
         return udr
 
     def _parse_content(self, content: str, doc_id: str) -> list[UDRBlock]:
-        """按标题层级和段落解析"""
+        """按标题层级、表格、代码块解析"""
         blocks = []
         lines = content.split("\n")
         current_section = []
-        current_heading = ""
         section_path = ""
         heading_stack = []
+        i = 0
 
-        for line in lines:
-            # 检测标题
+        while i < len(lines):
+            line = lines[i]
+
+            # 标题
             heading_match = re.match(r"^(#{1,6})\s+(.+)$", line)
             if heading_match:
-                # 先保存当前段落
                 if current_section:
-                    blocks.append(self._make_paragraph_block(
-                        doc_id, len(blocks), current_section, section_path
-                    ))
+                    blocks.append(self._make_paragraph_block(doc_id, len(blocks), current_section, section_path))
                     current_section = []
-
                 level = len(heading_match.group(1))
                 heading_text = heading_match.group(2).strip()
-
-                # 更新 section_path
                 while heading_stack and heading_stack[-1][0] >= level:
                     heading_stack.pop()
                 heading_stack.append((level, heading_text))
                 section_path = " > ".join(h[1] for h in heading_stack)
-
                 blocks.append(UDRBlock(
-                    block_id=f"{doc_id}_b{len(blocks):04d}",
-                    type="heading",
-                    text=heading_text,
-                    level=level,
-                    section_path=section_path,
+                    block_id=f"{doc_id}_b{len(blocks):04d}", type="heading",
+                    text=heading_text, level=level, section_path=section_path,
                 ))
-                current_heading = heading_text
+                i += 1
                 continue
 
-            # 检测表格
-            if line.startswith("|") and line.endswith("|"):
+            # 代码块 ```
+            if line.strip().startswith("```"):
                 if current_section:
-                    blocks.append(self._make_paragraph_block(
-                        doc_id, len(blocks), current_section, section_path
-                    ))
+                    blocks.append(self._make_paragraph_block(doc_id, len(blocks), current_section, section_path))
                     current_section = []
-                # 表格检测在外部处理
+                lang = line.strip()[3:].strip()
+                code_lines = []
+                i += 1
+                while i < len(lines):
+                    if lines[i].strip().startswith("```"):
+                        i += 1
+                        break
+                    code_lines.append(lines[i])
+                    i += 1
+                code_text = "\n".join(code_lines)
+                if code_text.strip():
+                    blocks.append(UDRBlock(
+                        block_id=f"{doc_id}_b{len(blocks):04d}", type="code",
+                        text=code_text, section_path=section_path,
+                        metadata={"language": lang} if lang else {},
+                    ))
                 continue
 
-            # 检测代码块
-            if line.startswith("```"):
+            # 表格 (连续 |...| 行)
+            if line.strip().startswith("|") and line.strip().endswith("|"):
                 if current_section:
-                    blocks.append(self._make_paragraph_block(
-                        doc_id, len(blocks), current_section, section_path
-                    ))
+                    blocks.append(self._make_paragraph_block(doc_id, len(blocks), current_section, section_path))
                     current_section = []
-                # 简化处理：跳过代码块边界标记
+                table_lines = []
+                while i < len(lines) and lines[i].strip().startswith("|") and lines[i].strip().endswith("|"):
+                    table_lines.append(lines[i])
+                    i += 1
+                # Parse table: extract headers and rows
+                rows = []
+                for tl in table_lines:
+                    cells = [c.strip() for c in tl.strip().strip("|").split("|")]
+                    # Skip separator rows like |---|---|
+                    if all(re.match(r"^[-:]+$", c) for c in cells):
+                        continue
+                    rows.append(cells)
+                if rows:
+                    headers = rows[0] if len(rows) > 0 else []
+                    data_rows = rows[1:] if len(rows) > 1 else []
+                    table_text = "\n".join(table_lines)
+                    blocks.append(UDRBlock(
+                        block_id=f"{doc_id}_b{len(blocks):04d}", type="table",
+                        text=table_text, section_path=section_path,
+                        structured_data={"headers": headers, "rows": data_rows},
+                    ))
                 continue
 
-            # 检测任务列表
+            # 任务列表
             task_match = re.match(r"^(\s*)[-*+]\s+\[([ x])\]\s+(.+)$", line)
             if task_match:
                 if current_section:
-                    blocks.append(self._make_paragraph_block(
-                        doc_id, len(blocks), current_section, section_path
-                    ))
+                    blocks.append(self._make_paragraph_block(doc_id, len(blocks), current_section, section_path))
                     current_section = []
-                task_text = task_match.group(3)
                 checked = task_match.group(2) == "x"
                 blocks.append(UDRBlock(
-                    block_id=f"{doc_id}_b{len(blocks):04d}",
-                    type="list",
-                    text=task_text,
-                    section_path=section_path,
+                    block_id=f"{doc_id}_b{len(blocks):04d}", type="list",
+                    text=task_match.group(3), section_path=section_path,
                     metadata={"checked": checked, "list_type": "task"},
                 ))
+                i += 1
                 continue
 
-            # 空行：段落边界
+            # 空行 = 段落边界
             if not line.strip():
                 if current_section:
-                    blocks.append(self._make_paragraph_block(
-                        doc_id, len(blocks), current_section, section_path
-                    ))
+                    blocks.append(self._make_paragraph_block(doc_id, len(blocks), current_section, section_path))
                     current_section = []
+                i += 1
                 continue
 
             current_section.append(line)
+            i += 1
 
-        # 处理最后一段
         if current_section:
-            blocks.append(self._make_paragraph_block(
-                doc_id, len(blocks), current_section, section_path
-            ))
+            blocks.append(self._make_paragraph_block(doc_id, len(blocks), current_section, section_path))
 
         return blocks
 

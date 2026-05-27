@@ -157,11 +157,11 @@ async def upload_document(
         await db.refresh(job)
         job_id_str = str(job.id)
 
-        # 7. Dispatch Celery task
+        # 7. Dispatch Celery task (只传 document_id + kb_id)
         try:
             from app.workers.celery_app import ingest_document
             ingest_document.apply_async(
-                args=[doc_id_str, kb_id_str, temp_path],
+                args=[doc_id_str, kb_id_str],
                 task_id=job_id_str,
             )
             logger.info(f"Dispatched Celery task {job_id_str} for doc {doc_id_str}")
@@ -267,7 +267,7 @@ async def import_folder(
             try:
                 from app.workers.celery_app import ingest_document
                 ingest_document.apply_async(
-                    args=[str(doc.id), str(kb_id), fobj.file_path],
+                    args=[str(doc.id), str(kb_id)],
                     task_id=str(job.id),
                 )
             except Exception:

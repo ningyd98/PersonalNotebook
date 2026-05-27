@@ -68,12 +68,22 @@ except ImportError:
 
 
 def _find_provider_for_model(model: str):
-    """根据模型名查找可用的 provider"""
-    for name, provider in _providers.items():
-        if hasattr(provider, "supports_model") and provider.supports_model(model):
-            return provider
-    # fallback: 返回 ollama
-    return _providers.get("ollama") or _providers.get("openai_compatible")
+    """根据模型名 + 环境变量选择 provider (vllm > openai_compatible > ollama)"""
+    import os
+    preferred = os.getenv("MODEL_PROVIDER", "")
+    if preferred and preferred in _providers:
+        return _providers[preferred]
+
+    # OpenAI 模型 → openai_compatible
+    if any(model.startswith(p) for p in ("gpt-", "o1", "o3", "text-embedding")):
+        return _providers.get("openai_compatible")
+
+    # 按优先级: vllm > openai_compatible > ollama
+    for name in ["vllm", "openai_compatible", "ollama"]:
+        p = _providers.get(name)
+        if p:
+            return p
+    return None
 
 
 # ============================================================

@@ -109,10 +109,10 @@ class OllamaProvider:
             return {"results": results}
         except Exception as e:
             logger.error(f"Ollama rerank failed: {e}")
-            # fallback: 保持原顺序，分数递减
+            # Fallback: 保守分数，避免绕过低置信拒答
             return {
                 "results": [
-                    {"index": i, "score": 1.0 - i * 0.01}
+                    {"index": i, "score": max(0.50 - i * 0.05, 0.05)}
                     for i in range(len(documents))
                 ]
             }
