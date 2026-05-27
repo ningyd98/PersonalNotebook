@@ -1,0 +1,37 @@
+[
+  {
+    "question": "Q-learning 和蒙特卡洛方法有什么区别？",
+    "expected_docs": ["reinforcement_learning_notes.md"],
+    "expected_chunks": ["chunk_rl_001", "chunk_rl_002"],
+    "reference_answer": "Q-learning 是一种时序差分方法，单步更新，无需完整轨迹；蒙特卡洛方法需要完整轨迹估计回报，回合结束后更新。",
+    "answer_type": "comparison"
+  },
+  {
+    "question": "什么是贝叶斯定理？",
+    "expected_docs": ["probability_notes.pdf"],
+    "expected_chunks": ["chunk_prob_005"],
+    "reference_answer": "贝叶斯定理描述了两个条件概率之间的关系：P(A|B) = P(B|A)P(A)/P(B)。",
+    "answer_type": "factoid"
+  },
+  {
+    "question": "总结机器学习的主要流派。",
+    "expected_docs": ["ml_overview.md", "ml_history.pdf"],
+    "expected_chunks": ["chunk_ml_001", "chunk_ml_002", "chunk_ml_003"],
+    "reference_answer": "机器学习的主要流派包括：监督学习、无监督学习、半监督学习、强化学习。监督学习使用标注数据，无监督学习使用未标注数据，强化学习通过与环境交互学习。",
+    "answer_type": "summary"
+  },
+  {
+    "question": "2025 年 Q2 的销售总额是多少？",
+    "expected_docs": ["sales_report_2025.xlsx"],
+    "expected_chunks": [],
+    "reference_answer": "2025 年 Q2 销售总额为 128 万元，其中 4 月 42 万，5 月 45 万，6 月 41 万。",
+    "answer_type": "table_qa"
+  },
+  {
+    "question": "爱因斯坦的生日是哪一天？",
+    "expected_docs": [],
+    "expected_chunks": [],
+    "reference_answer": null,
+    "answer_type": "no_answer"
+  }
+]

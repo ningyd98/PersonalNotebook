@@ -1,0 +1,138 @@
+version: "3.9"
+
+# ============================================================
+# Personal-KB 基础设施服务
+# ============================================================
+
+services:
+  # -------------------- PostgreSQL 16 --------------------
+  postgres:
+    image: postgres:16
+    container_name: kb-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-personal_kb}
+      POSTGRES_USER: ${POSTGRES_USER:-kb_user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-kb_password}
+      PGDATA: /var/lib/postgresql/data/pgdata
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./postgres/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-kb_user} -d ${POSTGRES_DB:-personal_kb}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - kb-network
+
+  # -------------------- Redis 7 --------------------
+  redis:
+    image: redis:7-alpine
+    container_name: kb-redis
+    restart: unless-stopped
+    command: redis-server --appendonly yes
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - kb-network
+
+  # -------------------- Qdrant 向量数据库 --------------------
+  qdrant:
+    image: qdrant/qdrant:latest
+    container_name: kb-qdrant
+    restart: unless-stopped
+    ports:
+      - "${QDRANT_PORT:-6333}:6333"
+      - "6334:6334"
+    volumes:
+      - qdrant_data:/qdrant/storage
+    environment:
+      QDRANT__SERVICE__GRPC_PORT: 6334
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:6333/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+    networks:
+      - kb-network
+
+  # -------------------- MinIO 对象存储 --------------------
+  minio:
+    image: minio/minio:latest
+    container_name: kb-minio
+    restart: unless-stopped
+    command: server /data --console-address ":9001"
+    ports:
+      - "${MINIO_PORT:-9000}:9000"
+      - "9001:9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ACCESS_KEY:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_SECRET_KEY:-minioadmin}
+    volumes:
+      - minio_data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+    networks:
+      - kb-network
+
+  # -------------------- MinIO 自动创建 Bucket --------------------
+  minio-create-bucket:
+    image: minio/mc:latest
+    container_name: kb-minio-setup
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint: >
+      /bin/sh -c "
+      mc alias set local http://minio:9000 ${MINIO_ACCESS_KEY:-minioadmin} ${MINIO_SECRET_KEY:-minioadmin};
+      mc mb local/${MINIO_BUCKET:-kb-assets} --ignore-existing;
+      mc anonymous set private local/${MINIO_BUCKET:-kb-assets};
+      echo 'MinIO bucket created successfully';
+      exit 0;
+      "
+    networks:
+      - kb-network
+
+  # -------------------- Nginx 反向代理 --------------------
+  nginx:
+    image: nginx:alpine
+    container_name: kb-nginx
+    restart: unless-stopped
+    ports:
+      - "80:80"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx/conf.d:/etc/nginx/conf.d:ro
+    depends_on:
+      - postgres
+      - redis
+    networks:
+      - kb-network
+
+volumes:
+  postgres_data:
+    name: kb-postgres-data
+  redis_data:
+    name: kb-redis-data
+  qdrant_data:
+    name: kb-qdrant-data
+  minio_data:
+    name: kb-minio-data
+
+networks:
+  kb-network:
+    name: kb-network
+    driver: bridge
