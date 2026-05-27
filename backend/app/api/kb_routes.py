@@ -15,6 +15,15 @@ router = APIRouter()
 DEFAULT_USER_ID = "00000000-0000-0000-0000-000000000001"
 
 
+def _verify_kb_ownership(db_result, current_user_id: str = DEFAULT_USER_ID):
+    """校验知识库归属"""
+    if not db_result:
+        return
+    uid = str(db_result.user_id) if hasattr(db_result, 'user_id') else None
+    if uid and uid != current_user_id:
+        raise HTTPException(status_code=403, detail="Access denied: not your knowledge base")
+
+
 @router.post("/kbs", response_model=KBResponse)
 async def create_kb(req: KBCreate, db: AsyncSession = Depends(get_db)):
     kb = KnowledgeBase(

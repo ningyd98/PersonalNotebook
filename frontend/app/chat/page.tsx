@@ -186,6 +186,11 @@ export default function ChatPage() {
                 msg.role === "user" ? "bg-primary text-primary-foreground ml-auto" : "bg-card border"
               }`}>
                 <div className="text-sm whitespace-pre-wrap leading-relaxed">{msg.content}</div>
+                {msg.role === "assistant" && msg.content?.includes("当前知识库未找到可靠依据") && (
+                  <div className="mt-2 p-2 bg-orange-50 border border-orange-200 rounded text-xs text-orange-700">
+                    ⚠️ 低置信拒答 — 知识库中未找到足够的可靠证据。建议补充相关文档后重试。
+                  </div>
+                )}
               </div>
 
               {msg.citations && msg.citations.length > 0 && (

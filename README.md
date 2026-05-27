@@ -274,19 +274,38 @@ open http://localhost:9001
 
 ## 开发阶段
 
-### Phase 1.5 (当前) ✅
-- ✅ 完整 Celery 7步 DAG (detect→parse→chunk→embed→index→check→complete)
-- ✅ 真实文件上传链路 (hash→dedup→MinIO→document→job→Celery)
-- ✅ 真实 API 数据库查询 (KB/Document/Job/Conversation/Message)
-- ✅ Chat 持久化 (会话管理 + 消息历史)
-- ✅ Citation Verification (引用验证 + 低置信度拒答)
-- ✅ E2E 集成测试 (7 个测试用例)
-- ✅ 前端真实数据接入
+### Phase 2A (当前) ✅
+- ✅ 前端管理台 7 页面 (Dashboard/KB/Documents/Chat/Debug/Eval/Status)
+- ✅ Debug Trace 页 (dense/rerank/EvidencePack/claims 可视化)
+- ✅ 系统健康检查 (PG/Qdrant/MinIO/Redis)
+- ✅ E2E Smoke Test (scripts/e2e_smoke_test.sh)
+- ✅ Qdrant is_active 过滤 + 双缓冲 reindex
+- ✅ 文档状态机 + 版本管理
+- ✅ Enhanced EvidencePack + 多因子拒答
+
+### Phase 1.7 ✅
+- ✅ 状态机 + 双缓冲 reindex + active_version
 
 ### Phase 2 (规划)
 - DOCX/PPTX/XLSX/LaTeX/Image 解析器
-- 文档详情页多 Tabs
-- 解析质量报告可视化
+- Query Rewriter + Hybrid Search + BM25
+
+## 故障排查
+
+| 问题 | 解决 |
+|------|------|
+| `alembic upgrade head` 失败 | 确认 PostgreSQL 运行且 .env 中密码正确 |
+| Qdrant 维度不匹配 | 更新 `QDRANT_VECTOR_SIZE` 匹配 embedding 模型 |
+| Celery worker 不启动 | 确认 Redis 运行，`celery -A app.workers.celery_app worker` |
+| Chat 返回"未找到可靠依据" | 确认文档状态为 READY，active_version > 0 |
+| 前端上传失败 | 检查 MinIO bucket `kb-assets` 是否存在 |
+| `MatchValue(is_active)` 无结果 | 旧数据无 is_active 字段，需 `POST /kbs/{id}/reindex` |
+
+## E2E 验收
+
+```bash
+bash scripts/e2e_smoke_test.sh
+```
 
 ## 许可证
 
