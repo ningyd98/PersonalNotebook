@@ -230,6 +230,8 @@ class Citation(BaseModel):
     evidence_id: str
     source_type: str
     document_id: uuid.UUID
+    chunk_id: Optional[str] = None
+    version_id: Optional[int] = None
     filename: str
     page_number: Optional[int] = None
     slide_number: Optional[int] = None
@@ -257,6 +259,9 @@ class ChatResponse(BaseModel):
     answer: str
     citations: list[Citation] = []
     trace: Optional[RetrievalTrace] = None
+    should_refuse: bool = False
+    refusal_reason: Optional[str] = None
+    citation_coverage: float = 0.0
     conversation_id: uuid.UUID
     message_id: uuid.UUID
     model: str

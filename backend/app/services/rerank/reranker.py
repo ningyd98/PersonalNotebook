@@ -74,6 +74,8 @@ class EvidencePackBuilder:
                 "evidence_id": f"ev_{i:03d}",
                 "source_type": hit.get("source_type", "text"),
                 "document_id": hit.get("document_id", ""),
+                "chunk_id": hit.get("chunk_id", ""),
+                "version_id": hit.get("version_id", 1),
                 "filename": hit.get("filename", ""),
                 "content": hit.get("content", ""),
                 "page_number": hit.get("page_number"),

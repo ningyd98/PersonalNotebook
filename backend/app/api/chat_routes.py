@@ -33,6 +33,15 @@ LOW_CONFIDENCE_THRESHOLD = 0.15
 NO_EVIDENCE_ANSWER = "当前知识库未找到可靠依据。"
 
 
+def _parse_uuid(value: object) -> uuid.UUID | None:
+    if not value:
+        return None
+    try:
+        return uuid.UUID(str(value))
+    except (TypeError, ValueError):
+        return None
+
+
 @router.post("/chat", response_model=ChatResponse)
 async def chat(req: ChatRequest, db: AsyncSession = Depends(get_db)):
     start_time = time.time()
@@ -132,6 +141,9 @@ async def chat(req: ChatRequest, db: AsyncSession = Depends(get_db)):
             message_id=assistant_msg.id,
             model=settings.DEFAULT_LLM,
             latency_ms=latency_ms,
+            should_refuse=True,
+            refusal_reason="no_evidence_or_low_confidence",
+            citation_coverage=0.0,
         )
 
     # ================================================================
@@ -154,25 +166,32 @@ async def chat(req: ChatRequest, db: AsyncSession = Depends(get_db)):
     )
 
     # Build Citation objects
-    citations = [
-        Citation(
-            evidence_id=c.get("evidence_id", f"ev_{i:03d}"),
-            source_type=c.get("source_type", "text"),
-            document_id=c.get("document_id", "") if c.get("document_id") else uuid.uuid4(),
-            filename=c.get("filename", ""),
-            page_number=c.get("page_number"),
-            slide_number=c.get("slide_number"),
-            sheet_name=c.get("sheet_name"),
-            cell_range=c.get("cell_range"),
-            start_time=c.get("start_time"),
-            end_time=c.get("end_time"),
-            section_path=c.get("section_path"),
-            score=c.get("score", 0.0),
-            content_preview=c.get("content_preview", c.get("content", "")[:200]),
-            asset_preview=c.get("asset_preview"),
+    citations = []
+    for i, c in enumerate(verified_citations):
+        doc_uuid = _parse_uuid(c.get("document_id"))
+        if doc_uuid is None:
+            logger.warning("Dropping citation without valid document_id: {}", c.get("evidence_id"))
+            continue
+        citations.append(
+            Citation(
+                evidence_id=c.get("evidence_id", f"ev_{i:03d}"),
+                source_type=c.get("source_type", "text"),
+                document_id=doc_uuid,
+                chunk_id=c.get("chunk_id"),
+                version_id=c.get("version_id"),
+                filename=c.get("filename", ""),
+                page_number=c.get("page_number"),
+                slide_number=c.get("slide_number"),
+                sheet_name=c.get("sheet_name"),
+                cell_range=c.get("cell_range"),
+                start_time=c.get("start_time"),
+                end_time=c.get("end_time"),
+                section_path=c.get("section_path"),
+                score=c.get("score", 0.0),
+                content_preview=c.get("content_preview", c.get("content", "")[:200]),
+                asset_preview=c.get("asset_preview"),
+            )
         )
-        for i, c in enumerate(verified_citations)
-    ]
 
     # ================================================================
     # 6. Save assistant message
@@ -210,6 +229,9 @@ async def chat(req: ChatRequest, db: AsyncSession = Depends(get_db)):
         message_id=assistant_msg.id,
         model=model_name,
         latency_ms=latency_ms,
+        should_refuse=False,
+        refusal_reason=None,
+        citation_coverage=(len(citations) / len(evidence_pack)) if evidence_pack else 0.0,
     )
 
 
@@ -227,6 +249,8 @@ def _verify_citations(generated_citations: list[dict], evidence_pack: list[dict]
                 "evidence_id": ev["evidence_id"],
                 "source_type": ev.get("source_type", "text"),
                 "document_id": ev.get("document_id", ""),
+                "chunk_id": ev.get("chunk_id", ""),
+                "version_id": ev.get("version_id", 1),
                 "filename": ev.get("filename", ""),
                 "page_number": ev.get("page_number"),
                 "slide_number": ev.get("slide_number"),
@@ -249,6 +273,8 @@ def _verify_citations(generated_citations: list[dict], evidence_pack: list[dict]
             verified.append({
                 **cit,
                 "document_id": ev.get("document_id", cit.get("document_id", "")),
+                "chunk_id": ev.get("chunk_id", cit.get("chunk_id", "")),
+                "version_id": ev.get("version_id", cit.get("version_id", 1)),
                 "filename": ev.get("filename", cit.get("filename", "")),
                 "score": ev.get("score", cit.get("score", 0.0)),
                 "content_preview": ev.get("content", cit.get("content_preview", ""))[:200],

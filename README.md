@@ -1,4 +1,4 @@
-# Personal-KB
+# PersonalNotebook
 
 > 个人本地知识库系统 — 多源数据接入、多模态解析、中文优化 RAG、引用溯源
 
@@ -8,33 +8,33 @@ Personal-KB 是一个支持本地/私有化部署的个人知识库系统。Phas
 
 ### 技术栈
 
-| 层 | 技术 |
-|---|---|
-| 前端 | Next.js 14 + React 18 + TypeScript + Tailwind CSS |
-| 后端 | FastAPI + SQLAlchemy 2.0 (async) + Pydantic v2 + Alembic |
-| 异步任务 | Redis + Celery (7步 DAG) |
-| 存储 | PostgreSQL 16 + MinIO |
-| 向量检索 | Qdrant |
-| 模型服务 | model-gateway (Ollama / vLLM / OpenAI-compatible) |
+| 层       | 技术                                                     |
+| -------- | -------------------------------------------------------- |
+| 前端     | Next.js 14 + React 18 + TypeScript + Tailwind CSS        |
+| 后端     | FastAPI + SQLAlchemy 2.0 (async) + Pydantic v2 + Alembic |
+| 异步任务 | Redis + Celery (7步 DAG)                                 |
+| 存储     | PostgreSQL 16 + MinIO                                    |
+| 向量检索 | Qdrant                                                   |
+| 模型服务 | model-gateway (Ollama / vLLM / OpenAI-compatible)        |
 
 ### 默认模型建议
 
-| 模型类型 | 推荐模型 | 向量维度 |
-|---------|---------|---------|
-| LLM | Qwen3-8B-Instruct / Qwen3-14B-Instruct | — |
-| Embedding | bge-m3 | 1024 |
-| Embedding | Qwen3-Embedding-0.6B | 1024 |
-| Rerank | Qwen3-Reranker-0.6B | — |
+| 模型类型  | 推荐模型                               | 向量维度 |
+| --------- | -------------------------------------- | -------- |
+| LLM       | Qwen3-8B-Instruct / Qwen3-14B-Instruct | —       |
+| Embedding | bge-m3                                 | 1024     |
+| Embedding | Qwen3-Embedding-0.6B                   | 1024     |
+| Rerank    | Qwen3-Reranker-0.6B                    | —       |
 
 ## 环境要求
 
-| 软件 | 最低版本 | 说明 |
-|------|---------|------|
-| Python | 3.11+ | 后端 + model-gateway |
-| Node.js | 18+ | 前端 (Next.js) |
-| Docker | 24.0+ | 基础服务 (PostgreSQL/Redis/Qdrant/MinIO) |
-| Docker Compose | 2.0+ | 一键启动 |
-| Ollama | latest | 本地 LLM 服务 (可选) |
+| 软件           | 最低版本 | 说明                                     |
+| -------------- | -------- | ---------------------------------------- |
+| Python         | 3.11+    | 后端 + model-gateway                     |
+| Node.js        | 18+      | 前端 (Next.js)                           |
+| Docker         | 24.0+    | 基础服务 (PostgreSQL/Redis/Qdrant/MinIO) |
+| Docker Compose | 2.0+     | 一键启动                                 |
+| Ollama         | latest   | 本地 LLM 服务 (可选)                     |
 
 ## 从零到问答：完整步骤
 
@@ -275,6 +275,7 @@ open http://localhost:9001
 ## 开发阶段
 
 ### Phase 2A (当前) ✅
+
 - ✅ 前端管理台 7 页面 (Dashboard/KB/Documents/Chat/Debug/Eval/Status)
 - ✅ Debug Trace 页 (dense/rerank/EvidencePack/claims 可视化)
 - ✅ 系统健康检查 (PG/Qdrant/MinIO/Redis)
@@ -284,22 +285,24 @@ open http://localhost:9001
 - ✅ Enhanced EvidencePack + 多因子拒答
 
 ### Phase 1.7 ✅
+
 - ✅ 状态机 + 双缓冲 reindex + active_version
 
 ### Phase 2 (规划)
+
 - DOCX/PPTX/XLSX/LaTeX/Image 解析器
 - Query Rewriter + Hybrid Search + BM25
 
 ## 故障排查
 
-| 问题 | 解决 |
-|------|------|
-| `alembic upgrade head` 失败 | 确认 PostgreSQL 运行且 .env 中密码正确 |
-| Qdrant 维度不匹配 | 更新 `QDRANT_VECTOR_SIZE` 匹配 embedding 模型 |
-| Celery worker 不启动 | 确认 Redis 运行，`celery -A app.workers.celery_app worker` |
-| Chat 返回"未找到可靠依据" | 确认文档状态为 READY，active_version > 0 |
-| 前端上传失败 | 检查 MinIO bucket `kb-assets` 是否存在 |
-| `MatchValue(is_active)` 无结果 | 旧数据无 is_active 字段，需 `POST /kbs/{id}/reindex` |
+| 问题                             | 解决                                                         |
+| -------------------------------- | ------------------------------------------------------------ |
+| `alembic upgrade head` 失败    | 确认 PostgreSQL 运行且 .env 中密码正确                       |
+| Qdrant 维度不匹配                | 更新 `QDRANT_VECTOR_SIZE` 匹配 embedding 模型              |
+| Celery worker 不启动             | 确认 Redis 运行，`celery -A app.workers.celery_app worker` |
+| Chat 返回"未找到可靠依据"        | 确认文档状态为 READY，active_version > 0                     |
+| 前端上传失败                     | 检查 MinIO bucket `kb-assets` 是否存在                     |
+| `MatchValue(is_active)` 无结果 | 旧数据无 is_active 字段，需 `POST /kbs/{id}/reindex`       |
 
 ## E2E 验收
 

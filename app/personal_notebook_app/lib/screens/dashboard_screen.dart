@@ -11,15 +11,17 @@ class _DashboardScreenState extends State<DashboardScreen> {
   Map<String, dynamic>? _health;
   Map<String, dynamic>? _kbs;
   bool _loading = true;
+  String? _error;
 
   @override
   void initState() { super.initState(); _load(); }
 
   Future<void> _load() async {
     try {
+      setState(() { _loading = true; _error = null; });
       final results = await Future.wait([apiClient.get('/health'), apiClient.get('/api/kbs?page_size=50')]);
       if (mounted) setState(() { _health = results[0]; _kbs = results[1]; _loading = false; });
-    } catch (_) { if (mounted) setState(() => _loading = false); }
+    } catch (e) { if (mounted) setState(() { _error = e.toString(); _loading = false; }); }
   }
 
   @override
@@ -31,17 +33,18 @@ class _DashboardScreenState extends State<DashboardScreen> {
       body: _loading ? const Center(child: CircularProgressIndicator()) : RefreshIndicator(
         onRefresh: _load,
         child: ListView(padding: const EdgeInsets.all(16), children: [
+          if (_error != null) Text(_error!, style: const TextStyle(color: Colors.red)),
           _StatCard(title: '知识库', value: '${kbs.length}', icon: Icons.book),
           _StatCard(title: '文档', value: '$docCount', icon: Icons.description),
           _StatCard(title: 'Core', value: _health?['status'] ?? '?', icon: Icons.cloud, color: _health?['status'] == 'ok' ? Colors.green : Colors.red),
           const SizedBox(height: 16),
-          _NavButton(Icons.book, '知识库管理', '/kb-list'),
-          _NavButton(Icons.upload_file, '上传文档', '/document-upload'),
-          _NavButton(Icons.chat, '问答', '/chat'),
-          _NavButton(Icons.bug_report, 'Debug Trace', '/debug-trace'),
-          _NavButton(Icons.assessment, '评测', '/eval'),
-          _NavButton(Icons.monitor_heart, '系统状态', '/system-status'),
-          _NavButton(Icons.settings, '设置', '/settings'),
+          const _NavButton(Icons.book, '知识库管理', '/kb-list'),
+          const _NavButton(Icons.upload_file, '上传文档', '/document-upload'),
+          const _NavButton(Icons.chat, '问答', '/chat'),
+          const _NavButton(Icons.bug_report, 'Debug Trace', '/debug-trace'),
+          const _NavButton(Icons.assessment, '评测', '/eval'),
+          const _NavButton(Icons.monitor_heart, '系统状态', '/system-status'),
+          const _NavButton(Icons.settings, '设置', '/settings'),
         ]),
       ),
     );

@@ -25,6 +25,13 @@ void main() {
   );
 }
 
+String? _routeStringArg(BuildContext context, [String? key]) {
+  final args = ModalRoute.of(context)?.settings.arguments;
+  if (args is String) return args;
+  if (args is Map && key != null) return args[key]?.toString();
+  return null;
+}
+
 class PersonalNotebookApp extends StatelessWidget {
   const PersonalNotebookApp({super.key});
 
@@ -48,12 +55,12 @@ class PersonalNotebookApp extends StatelessWidget {
         '/pairing': (_) => const PairingScreen(),
         '/dashboard': (_) => const DashboardScreen(),
         '/kb-list': (_) => const KbListScreen(),
-        '/kb-detail': (_) => const KbDetailScreen(),
-        '/document-upload': (_) => const DocumentUploadScreen(),
-        '/document-list': (_) => const DocumentListScreen(),
-        '/document-detail': (_) => const DocumentDetailScreen(),
-        '/chat': (_) => const ChatScreen(),
-        '/debug-trace': (_) => const DebugTraceScreen(),
+        '/kb-detail': (context) => KbDetailScreen(kbId: _routeStringArg(context, 'kb_id')),
+        '/document-upload': (context) => DocumentUploadScreen(kbId: _routeStringArg(context, 'kb_id')),
+        '/document-list': (context) => DocumentListScreen(kbId: _routeStringArg(context, 'kb_id')),
+        '/document-detail': (context) => DocumentDetailScreen(docId: _routeStringArg(context, 'doc_id')),
+        '/chat': (context) => ChatScreen(kbId: _routeStringArg(context, 'kb_id')),
+        '/debug-trace': (context) => DebugTraceScreen(kbId: _routeStringArg(context, 'kb_id')),
         '/eval': (_) => const EvalScreen(),
         '/system-status': (_) => const SystemStatusScreen(),
         '/settings': (_) => const SettingsScreen(),

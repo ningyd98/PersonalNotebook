@@ -1,88 +1,172 @@
-"""Pairing API — Phase 2A-App 移动端配对认证"""
+"""Pairing API — Phase 2A-v2 持久化设备配对"""
 
+import hashlib
 import secrets
 import uuid
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
-from fastapi import APIRouter, HTTPException, Query
-from pydantic import BaseModel
+from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel, Field
+from sqlalchemy import or_, select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.db.session import get_db
+from app.models.models import PairedDevice
 
 router = APIRouter()
-
-# In-memory store (MVP — replace with DB table for production)
-_pairing_tokens: dict[str, dict] = {}
 
 
 class PairCreateRequest(BaseModel):
     tenant_id: str = "default"
+    device_name: Optional[str] = "Unpaired device"
+    expires_hours: int = Field(default=24, ge=1, le=168)
+    core_base_url: str = "http://HOST:8000"
+    metadata_json: Optional[dict] = None
 
 
 class PairVerifyRequest(BaseModel):
     token: str
+    device_name: Optional[str] = None
+
+
+def _hash_token(token: str) -> str:
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+
+def _utcnow() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+def _as_aware(dt: datetime) -> datetime:
+    return dt if dt.tzinfo is not None else dt.replace(tzinfo=timezone.utc)
+
+
+def _device_payload(device: PairedDevice) -> dict:
+    return {
+        "device_id": str(device.id),
+        "tenant_id": device.tenant_id,
+        "device_name": device.device_name,
+        "token_hash_prefix": device.token_hash[:16],
+        "created_at": device.created_at.isoformat() if device.created_at else None,
+        "expires_at": device.expires_at.isoformat() if device.expires_at else None,
+        "revoked_at": device.revoked_at.isoformat() if device.revoked_at else None,
+        "last_seen_at": device.last_seen_at.isoformat() if device.last_seen_at else None,
+        "metadata_json": device.metadata_json,
+    }
 
 
 @router.post("/pair/create")
-async def create_pair_token(req: PairCreateRequest):
-    """桌面端生成配对 Token + 二维码内容"""
-    token = secrets.token_urlsafe(24)
-    expires_at = datetime.utcnow() + timedelta(hours=24)
-    _pairing_tokens[token] = {
+async def create_pair_token(req: PairCreateRequest, db: AsyncSession = Depends(get_db)):
+    """桌面端生成配对 Token。数据库只保存 sha256(token)，明文 token 只返回一次。"""
+    token = secrets.token_urlsafe(32)
+    token_hash = _hash_token(token)
+    now = _utcnow()
+    expires_at = now + timedelta(hours=req.expires_hours)
+
+    device = PairedDevice(
+        tenant_id=req.tenant_id,
+        device_name=req.device_name,
+        token_hash=token_hash,
+        expires_at=expires_at,
+        metadata_json=req.metadata_json,
+    )
+    db.add(device)
+    await db.commit()
+    await db.refresh(device)
+
+    pairing_content = {
+        "type": "personal_notebook_pairing",
+        "core_base_url": req.core_base_url,
         "tenant_id": req.tenant_id,
+        "device_id": str(device.id),
+        "token": token,
         "expires_at": expires_at.isoformat(),
-        "created_at": datetime.utcnow().isoformat(),
     }
     return {
         "success": True,
+        "device_id": str(device.id),
+        "tenant_id": req.tenant_id,
+        "token": token,
+        "expires_at": expires_at.isoformat(),
+        "pairing_content": pairing_content,
         "data": {
+            "device_id": str(device.id),
+            "tenant_id": req.tenant_id,
             "token": token,
             "expires_at": expires_at.isoformat(),
-            "pairing_content": {
-                "type": "personal_notebook_pairing",
-                "core_base_url": "http://HOST:8000",
-                "tenant_id": req.tenant_id,
-                "token": token,
-                "expires_at": expires_at.isoformat(),
-            },
+            "pairing_content": pairing_content,
         },
     }
 
 
 @router.post("/pair/verify")
-async def verify_pair_token(req: PairVerifyRequest):
-    """移动端验证配对 Token"""
-    entry = _pairing_tokens.get(req.token)
-    if not entry:
-        raise HTTPException(status_code=401, detail="Invalid or expired token")
-    expires = datetime.fromisoformat(entry["expires_at"])
-    if datetime.utcnow() > expires:
-        del _pairing_tokens[req.token]
-        raise HTTPException(status_code=401, detail="Token expired")
+async def verify_pair_token(req: PairVerifyRequest, db: AsyncSession = Depends(get_db)):
+    """移动端验证配对 Token。revoke / expired 后必须失败。"""
+    token_hash = _hash_token(req.token)
+    now = _utcnow()
+    result = await db.execute(select(PairedDevice).where(PairedDevice.token_hash == token_hash))
+    device = result.scalars().first()
+    if not device:
+        raise HTTPException(status_code=401, detail="Invalid pairing token")
+    if device.revoked_at is not None:
+        raise HTTPException(status_code=401, detail="Pairing token revoked")
+    if _as_aware(device.expires_at) < now:
+        raise HTTPException(status_code=401, detail="Pairing token expired")
+
+    if req.device_name:
+        device.device_name = req.device_name
+    device.last_seen_at = now
+    await db.commit()
+    await db.refresh(device)
+
     return {
         "success": True,
-        "data": {"tenant_id": entry["tenant_id"], "verified": True},
-    }
-
-
-@router.get("/devices")
-async def list_devices():
-    """列出当前活跃配对"""
-    return {
-        "success": True,
+        "verified": True,
+        "tenant_id": device.tenant_id,
+        "device_id": str(device.id),
+        "token_hash_prefix": device.token_hash[:16],
         "data": {
-            "devices": [
-                {"token_hash": secrets.token_hex(8), "created_at": v["created_at"]}
-                for v in _pairing_tokens.values()
-            ],
+            "verified": True,
+            "tenant_id": device.tenant_id,
+            "device_id": str(device.id),
+            "token_hash_prefix": device.token_hash[:16],
         },
     }
 
 
-@router.delete("/devices/{token_hash}")
-async def revoke_device(token_hash: str):
-    """撤销配对"""
-    # Find and remove matching token
-    to_remove = [k for k in _pairing_tokens if secrets.token_hex(8) == token_hash]
-    for k in to_remove:
-        del _pairing_tokens[k]
-    return {"success": True, "message": f"Revoked {len(to_remove)} device(s)"}
+@router.get("/devices")
+async def list_devices(db: AsyncSession = Depends(get_db)):
+    """列出真实设备列表。不返回明文 token。"""
+    result = await db.execute(select(PairedDevice).order_by(PairedDevice.created_at.desc()))
+    devices = [_device_payload(d) for d in result.scalars().all()]
+    return {"success": True, "devices": devices, "data": {"devices": devices}}
+
+
+@router.delete("/devices/{device_id}")
+async def revoke_device(device_id: str, db: AsyncSession = Depends(get_db)):
+    """按 device_id、完整 token_hash 或 token_hash 前缀撤销设备。"""
+    now = _utcnow()
+    conditions = []
+    try:
+        conditions.append(PairedDevice.id == uuid.UUID(device_id))
+    except ValueError:
+        pass
+
+    conditions.append(PairedDevice.token_hash == device_id)
+    if 8 <= len(device_id) <= 64:
+        conditions.append(PairedDevice.token_hash.startswith(device_id))
+
+    result = await db.execute(select(PairedDevice).where(or_(*conditions)))
+    device = result.scalars().first()
+    if not device:
+        raise HTTPException(status_code=404, detail="Device not found")
+
+    device.revoked_at = now
+    await db.commit()
+    return {
+        "success": True,
+        "revoked": True,
+        "device_id": str(device.id),
+        "token_hash_prefix": device.token_hash[:16],
+    }

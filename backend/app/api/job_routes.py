@@ -88,7 +88,7 @@ async def retry_job(job_id: uuid.UUID, db: AsyncSession = Depends(get_db)):
     if not job:
         raise HTTPException(status_code=404, detail="Job not found")
 
-    job.status = "pending"
+    job.status = "PENDING"
     job.retry_count = (job.retry_count or 0) + 1
     job.error_message = None
     await db.commit()
@@ -119,7 +119,7 @@ async def cancel_job(job_id: uuid.UUID, db: AsyncSession = Depends(get_db)):
     except Exception:
         pass
 
-    job.status = "failed"
+    job.status = "CANCELLED"
     job.error_message = "Cancelled by user"
     await db.commit()
 

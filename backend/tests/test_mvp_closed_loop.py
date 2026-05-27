@@ -22,6 +22,7 @@ import os
 import re
 import sys
 import uuid
+from datetime import datetime
 from pathlib import Path
 
 import pytest
@@ -54,6 +55,7 @@ def test_alembic_migration_exists():
     versions_dir = Path(__file__).parent.parent / "alembic" / "versions"
     migrations = list(versions_dir.glob("*.py"))
     assert len(migrations) > 0, "No migration files found"
+    assert (versions_dir / "003_pairing_tokens.py").exists(), "Pairing migration missing"
     print(f"✅ {len(migrations)} migrations found")
 
 
@@ -324,3 +326,24 @@ def test_rerank_fallback_conservative():
     assert max(old_scores) > 0.90, "Old fallback scores were too high"
 
     print(f"✅ Rerank fallback scores conservative: {scores}")
+
+
+def test_pairing_token_hash_only():
+    """Pairing API must persist only sha256(token), never plaintext token."""
+    from app.api.pair_routes import _hash_token
+    from app.models.models import PairedDevice
+
+    token = "pairing-secret-token"
+    token_hash = _hash_token(token)
+    assert token_hash != token
+    assert len(token_hash) == 64
+
+    device = PairedDevice(
+        tenant_id="default",
+        device_name="desktop",
+        token_hash=token_hash,
+        expires_at=datetime.utcnow(),
+    )
+    assert device.token_hash == token_hash
+    assert token not in device.token_hash
+    print("✅ Pairing stores token hash only")

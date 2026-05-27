@@ -9,13 +9,10 @@ echo "=== 2. compileall model-gateway ==="
 python3 -m compileall model-gateway
 
 echo "=== 3. ruff check ==="
-python3 -m ruff check backend/app model-gateway --ignore E501,F401,E402 2>/dev/null || echo "ruff not installed (skip)"
+python3 -m ruff check backend/app model-gateway --ignore E501,F401,E402
 
 echo "=== 4. pytest ==="
-cd backend
-python3 -m pytest tests/ -v 2>/dev/null || echo "pytest: tests need deps installed (skip)"
-
-cd ..
+PYTHONDONTWRITEBYTECODE=1 python3 -m pytest backend/tests/ -v
 echo "=== 5. Validate worker status/phase correctness ==="
 python3 -c "
 # Verify worker uses correct status values

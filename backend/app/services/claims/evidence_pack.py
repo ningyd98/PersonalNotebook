@@ -104,7 +104,8 @@ class EnhancedEvidencePackBuilder:
                     evidence_id=eid,
                     document_id=str(hit.get("document_id", "")),
                     document_title=hit.get("filename", ""),
-                    chunk_id=eid,
+                    version_id=hit.get("version_id", 1),
+                    chunk_id=str(hit.get("chunk_id") or eid),
                     content=hit.get("content", ""),
                     dense_score=hit.get("score", 0.0),
                     source_location=(

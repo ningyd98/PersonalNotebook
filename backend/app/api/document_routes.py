@@ -107,6 +107,7 @@ async def upload_document(
                 "document_id": str(existing.id),
                 "duplicate": True,
                 "parse_status": existing.parse_status,
+                "status": existing.status,
             }
 
         # 4. Upload to MinIO
@@ -149,7 +150,7 @@ async def upload_document(
             kb_id=kb_id,
             document_id=doc.id,
             job_type="ingest",
-            status="pending",
+            status="PENDING",
             progress=0.0,
         )
         db.add(job)
@@ -167,7 +168,7 @@ async def upload_document(
             logger.info(f"Dispatched Celery task {job_id_str} for doc {doc_id_str}")
         except Exception as e:
             logger.error(f"Failed to dispatch Celery task: {e}")
-            job.status = "failed"
+            job.status = "FAILED"
             job.error_message = f"Celery dispatch failed: {str(e)}"
             await db.commit()
 
@@ -176,6 +177,8 @@ async def upload_document(
             "document_id": doc_id_str,
             "job_id": job_id_str,
             "duplicate": False,
+            "parse_status": doc.parse_status,
+            "status": doc.status,
             "file_hash": file_hash,
             "file_size": file_size,
             "mime_type": mime_type,
@@ -259,7 +262,7 @@ async def import_folder(
             await db.commit()
             await db.refresh(doc)
 
-            job = IngestJob(kb_id=kb_id, document_id=doc.id, job_type="ingest", status="pending")
+            job = IngestJob(kb_id=kb_id, document_id=doc.id, job_type="ingest", status="PENDING")
             db.add(job)
             await db.commit()
             await db.refresh(job)
@@ -341,6 +344,8 @@ async def list_documents(
             "file_hash": doc.file_hash, "storage_path": doc.storage_path,
             "source_type": doc.source_type, "source_uri": doc.source_uri,
             "document_version": doc.document_version,
+            "active_version": doc.active_version,
+            "status": doc.status,
             "parse_status": doc.parse_status, "embed_status": doc.embed_status,
             "index_status": doc.index_status,
             "title": doc.title, "author": doc.author,
@@ -379,6 +384,8 @@ async def get_document(doc_id: uuid.UUID, db: AsyncSession = Depends(get_db)):
         "file_hash": doc.file_hash, "storage_path": doc.storage_path,
         "source_type": doc.source_type, "source_uri": doc.source_uri,
         "document_version": doc.document_version,
+        "active_version": doc.active_version,
+        "status": doc.status,
         "parse_status": doc.parse_status, "embed_status": doc.embed_status,
         "index_status": doc.index_status,
         "title": doc.title, "author": doc.author,

@@ -51,6 +51,22 @@ class User(Base, UUIDMixin, TimestampMixin):
 
 
 # ============================================================
+# paired_devices — App 配对 token / 设备
+# ============================================================
+class PairedDevice(Base, UUIDMixin):
+    __tablename__ = "paired_devices"
+
+    tenant_id: Mapped[str] = mapped_column(String(100), default="default", nullable=False, index=True)
+    device_name: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    token_hash: Mapped[str] = mapped_column(String(64), unique=True, nullable=False, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
+    revoked_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
+    last_seen_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    metadata_json: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+
+
+# ============================================================
 # 2. knowledge_bases
 # ============================================================
 class KnowledgeBase(Base, UUIDMixin, TimestampMixin, SoftDeleteMixin):

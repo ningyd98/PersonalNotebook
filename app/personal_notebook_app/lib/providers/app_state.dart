@@ -19,6 +19,10 @@ class AppState extends ChangeNotifier {
   Future<void> init() async {
     final url = await _storage.read(key: 'core_url');
     final token = await _storage.read(key: 'auth_token');
+    final tenantId = await _storage.read(key: 'tenant_id');
+    if (tenantId != null && tenantId.isNotEmpty) {
+      _tenantId = tenantId;
+    }
     if (url != null && url.isNotEmpty) {
       _coreUrl = url;
       apiClient.configure(baseUrl: url, token: token);
@@ -32,21 +36,34 @@ class AppState extends ChangeNotifier {
     try {
       apiClient.configure(baseUrl: url, token: token);
       final resp = await apiClient.post('/auth/pair/verify', body: {'token': token});
-      if (resp['success'] == true || resp['status'] == 'ok') {
+      final data = resp['data'] as Map<String, dynamic>?;
+      final verified = resp['verified'] == true ||
+          data?['verified'] == true ||
+          resp['success'] == true ||
+          resp['status'] == 'ok';
+      if (verified) {
         await _storage.write(key: 'core_url', value: url);
         await _storage.write(key: 'auth_token', value: token);
+        final tenantId = (resp['tenant_id'] ?? data?['tenant_id'])?.toString();
+        if (tenantId != null && tenantId.isNotEmpty) {
+          _tenantId = tenantId;
+          await _storage.write(key: 'tenant_id', value: tenantId);
+        }
         _coreUrl = url;
         _paired = true;
         notifyListeners();
         return true;
       }
-    } catch (_) {}
+    } catch (e) {
+      debugPrint('Pairing failed: $e');
+    }
     return false;
   }
 
   Future<void> unpair() async {
     await _storage.delete(key: 'core_url');
     await _storage.delete(key: 'auth_token');
+    await _storage.delete(key: 'tenant_id');
     apiClient.configure(baseUrl: _coreUrl, token: null);
     _paired = false;
     notifyListeners();

@@ -1,7 +1,8 @@
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
-import '../api/client.dart';
 import '../providers/app_state.dart';
 
 class PairingScreen extends StatefulWidget {
@@ -30,11 +31,20 @@ class _PairingScreenState extends State<PairingScreen> {
 
   void _onScan(String barcode) {
     try {
+      if (barcode.trimLeft().startsWith('{')) {
+        final data = jsonDecode(barcode) as Map<String, dynamic>;
+        _urlCtrl.text = data['core_base_url']?.toString() ?? _urlCtrl.text;
+        _tokenCtrl.text = data['token']?.toString() ?? '';
+        setState(() { _scanning = false; });
+        return;
+      }
       final qr = Uri.parse(barcode);
       _urlCtrl.text = '${qr.scheme}://${qr.host}:${qr.port}';
       _tokenCtrl.text = qr.queryParameters['token'] ?? '';
       setState(() { _scanning = false; });
-    } catch (_) {}
+    } catch (e) {
+      setState(() => _error = '无法解析二维码：$e');
+    }
   }
 
   @override
