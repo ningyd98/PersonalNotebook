@@ -358,3 +358,73 @@ async def submit_feedback(msg_id: uuid.UUID, req: FeedbackRequest, db: AsyncSess
         error_type=fb.error_type,
         created_at=fb.created_at,
     )
+
+
+# ================================================================
+# Debug Chat API — Phase 1.6
+# ================================================================
+@router.post("/chat/debug")
+async def chat_debug(req: ChatRequest, db: AsyncSession = Depends(get_db)):
+    """返回完整 RAG trace 用于排查召回/排序/生成质量"""
+    start_time = time.time()
+    kb_id = str(req.kb_id)
+
+    retrieval_result = await retrieval_service.retrieve(
+        query=req.question, kb_id=kb_id,
+        top_k=settings.VECTOR_TOP_K, retrieval_mode=req.retrieval_mode,
+    )
+    hits = retrieval_result["hits"]
+
+    reranked_hits = hits
+    if req.use_rerank and hits:
+        reranked_hits = await rerank_service.rerank(query=req.question, documents=hits, top_k=req.top_k)
+
+    from app.services.claims.evidence_pack import (
+        EnhancedEvidencePackBuilder, RefusalEngine, ClaimVerifier,
+    )
+    evidence_pack = EnhancedEvidencePackBuilder.build(
+        query=req.question, retrieval_hits=hits,
+        reranked_hits=reranked_hits, query_type=retrieval_result["query_type"],
+    )
+
+    gen_result = await generation_service.generate(
+        question=req.question,
+        evidence_pack=[e.to_dict() for e in evidence_pack.evidences],
+        strict_citation=req.strict_citation,
+    )
+    answer = gen_result.get("answer", "")
+    latency_ms = (time.time() - start_time) * 1000
+
+    coverage_ratio, supported, unsupported = ClaimVerifier.compute_coverage(
+        answer, evidence_pack.evidences
+    )
+    should_refuse, refusal_reason = RefusalEngine.evaluate(
+        evidence_pack, citation_coverage=coverage_ratio
+    )
+
+    return {
+        "query": req.question,
+        "query_type": retrieval_result["query_type"],
+        "rewritten_queries": [],
+        "dense_results": [
+            {"id": h.get("id"), "score": h.get("score"), "content": (h.get("content", ""))[:200]}
+            for h in hits[:10]
+        ],
+        "sparse_results": [],
+        "merged_results_count": len(hits),
+        "reranked_results": [
+            {"id": h.get("id"), "rerank_score": h.get("rerank_score", 0.0),
+             "content": (h.get("content", ""))[:200]}
+            for h in reranked_hits[:8]
+        ],
+        "evidence_pack": evidence_pack.to_dict(),
+        "answer": answer,
+        "citations": gen_result.get("citations", []),
+        "refusal_reason": refusal_reason if should_refuse else None,
+        "should_refuse": should_refuse,
+        "citation_coverage": coverage_ratio,
+        "supported_claims": supported,
+        "unsupported_claims": unsupported,
+        "latency_ms": latency_ms,
+        "model": gen_result.get("model", settings.DEFAULT_LLM),
+    }

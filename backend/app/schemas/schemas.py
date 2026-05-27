@@ -93,6 +93,8 @@ class DocumentResponse(BaseModel):
     parse_status: str
     embed_status: str
     index_status: str
+    status: str = "UPLOADED"
+    active_version: int = 1
     title: Optional[str] = None
     author: Optional[str] = None
     metadata_json: Optional[dict] = None
@@ -202,6 +204,8 @@ class IngestJobResponse(BaseModel):
     started_at: Optional[datetime] = None
     finished_at: Optional[datetime] = None
     retry_count: int = 0
+    phase: Optional[str] = None
+    idempotency_key: Optional[str] = None
     created_at: datetime
     updated_at: datetime
 

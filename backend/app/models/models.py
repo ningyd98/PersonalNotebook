@@ -43,6 +43,7 @@ class User(Base, UUIDMixin, TimestampMixin):
     email: Mapped[str] = mapped_column(String(255), unique=True, nullable=False)
     password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
     role: Mapped[str] = mapped_column(String(50), default="user", nullable=False)
+    tenant_id: Mapped[Optional[str]] = mapped_column(String(100), nullable=True, index=True)
 
     # 关系
     kbs = relationship("KnowledgeBase", back_populates="owner", lazy="selectin")
@@ -95,6 +96,11 @@ class Document(Base, UUIDMixin, TimestampMixin, SoftDeleteMixin):
     parse_status: Mapped[str] = mapped_column(String(30), default="pending")
     embed_status: Mapped[str] = mapped_column(String(30), default="pending")
     index_status: Mapped[str] = mapped_column(String(30), default="pending")
+    status: Mapped[str] = mapped_column(
+        String(30), default="UPLOADED", nullable=False,
+        doc="UPLOADED|PARSING|PARSED|CHUNKING|EMBEDDING|INDEXING|READY|FAILED|DELETED|REINDEXING"
+    )
+    active_version: Mapped[int] = mapped_column(Integer, default=1)
     title: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
     author: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     metadata_json: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
@@ -175,6 +181,8 @@ class DocumentChunk(Base, UUIDMixin, TimestampMixin):
     end_time: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     section_path: Mapped[Optional[str]] = mapped_column(String(1000), nullable=True)
     embedding_id: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    version_id: Mapped[int] = mapped_column(Integer, default=1)
+    idempotency_key: Mapped[Optional[str]] = mapped_column(String(128), nullable=True, index=True)
 
     # 关系
     document = relationship("Document", back_populates="chunks")
@@ -355,15 +363,13 @@ class IngestJob(Base, UUIDMixin, TimestampMixin):
     )
     job_type: Mapped[str] = mapped_column(String(50), nullable=False)
     status: Mapped[str] = mapped_column(
-        Enum(
-            "pending", "detecting", "extracting", "parsing",
-            "ocr", "asr", "captioning", "chunking", "embedding",
-            "indexing", "checking", "completed", "failed",
-            "partially_completed",
-            name="job_status_enum",
-        ),
-        default="pending",
-        nullable=False,
+        Enum("PENDING", "RUNNING", "RETRYING", "SUCCESS", "FAILED", "CANCELLED",
+             name="job_status_phase16_enum"),
+        default="PENDING", nullable=False,
+    )
+    phase: Mapped[Optional[str]] = mapped_column(
+        String(30), nullable=True,
+        doc="detecting|parsing|chunking|embedding|indexing|checking"
     )
     progress: Mapped[float] = mapped_column(Float, default=0.0)
     error_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
@@ -371,6 +377,7 @@ class IngestJob(Base, UUIDMixin, TimestampMixin):
     started_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     finished_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     retry_count: Mapped[int] = mapped_column(Integer, default=0)
+    idempotency_key: Mapped[Optional[str]] = mapped_column(String(128), nullable=True, index=True)
 
     kb = relationship("KnowledgeBase", back_populates="ingest_jobs")
     document = relationship("Document", back_populates="ingest_jobs")
@@ -406,5 +413,17 @@ class EvalCase(Base, UUIDMixin, TimestampMixin):
     reference_answer: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     answer_type: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
     metadata_json: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    # Evaluation results (Phase 1.6)
+    model_answer: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    retrieval_results_json: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    auto_score: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    human_score: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    recall_at_k: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    mrr: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    citation_precision: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    citation_recall: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    faithfulness: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    refusal_accuracy: Mapped[Optional[bool]] = mapped_column(Boolean, nullable=True)
+    eval_latency_ms: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
 
     dataset = relationship("EvalDataset", back_populates="cases")

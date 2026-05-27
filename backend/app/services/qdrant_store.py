@@ -78,6 +78,9 @@ class QdrantService:
                 "source_type": chunk.get("source_type", "text"),
                 "filename": chunk.get("source", {}).get("filename", ""),
                 "metadata_json": chunk.get("metadata_json", {}),
+                "version_id": chunk.get("version_id", 1),
+                "tenant_id": chunk.get("tenant_id", "default"),
+                "chunk_id": str(chunk.get("chunk_id", "")),
             }
 
             points.append(
@@ -103,21 +106,30 @@ class QdrantService:
         kb_id: str,
         top_k: int = 40,
         score_threshold: float = 0.0,
+        tenant_id: Optional[str] = None,
+        user_id: Optional[str] = None,
     ) -> list[dict]:
-        """向量检索"""
+        """向量检索 — 支持权限过滤"""
         self.ensure_collection()
+
+        must_conditions = [
+            qdrant_models.FieldCondition(
+                key="kb_id",
+                match=qdrant_models.MatchValue(value=str(kb_id)),
+            )
+        ]
+        if tenant_id:
+            must_conditions.append(
+                qdrant_models.FieldCondition(
+                    key="tenant_id",
+                    match=qdrant_models.MatchValue(value=str(tenant_id)),
+                )
+            )
 
         results = self.client.search(
             collection_name=self.collection_name,
             query_vector=query_vector,
-            query_filter=qdrant_models.Filter(
-                must=[
-                    qdrant_models.FieldCondition(
-                        key="kb_id",
-                        match=qdrant_models.MatchValue(value=str(kb_id)),
-                    )
-                ]
-            ),
+            query_filter=qdrant_models.Filter(must=must_conditions),
             limit=top_k,
             score_threshold=score_threshold,
         )
@@ -134,6 +146,9 @@ class QdrantService:
                 "slide_number": hit.payload.get("slide_number"),
                 "source_type": hit.payload.get("source_type"),
                 "metadata_json": hit.payload.get("metadata_json"),
+                "version_id": hit.payload.get("version_id", 1),
+                "tenant_id": hit.payload.get("tenant_id", "default"),
+                "chunk_id": hit.payload.get("chunk_id", ""),
             }
             for hit in results
         ]

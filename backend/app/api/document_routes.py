@@ -524,3 +524,60 @@ async def get_quality_report(doc_id: uuid.UUID, db: AsyncSession = Depends(get_d
         "chunk_quality": {"chunk_count": chunk_count},
         "overall_status": overall_status,
     }
+
+
+# ================================================================
+# Reindex & Consistency APIs — Phase 1.6
+# ================================================================
+@router.post("/documents/{doc_id}/reindex")
+async def reindex_document(doc_id: uuid.UUID, db: AsyncSession = Depends(get_db)):
+    """重新索引文档 — 双缓冲策略：先建新版本，校验后切换 active_version"""
+    doc = await db.get(Document, doc_id)
+    if not doc or doc.is_deleted:
+        raise HTTPException(status_code=404, detail="Document not found")
+    doc.status = "REINDEXING"
+    doc.document_version = (doc.document_version or 0) + 1
+    doc.active_version = 0
+    await db.commit()
+    try:
+        from app.workers.celery_app import reparse_document
+        r = reparse_document.delay(str(doc.id), str(doc.kb_id), {"version": doc.document_version, "reindex": True})
+        return {"message": "Reindex submitted", "document_id": str(doc.id), "job_id": r.id, "new_version": doc.document_version}
+    except Exception as e:
+        doc.status = "READY"; await db.commit()
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/kbs/{kb_id}/reindex")
+async def reindex_kb(kb_id: uuid.UUID, db: AsyncSession = Depends(get_db)):
+    """重新索引整个知识库"""
+    from app.models.models import KnowledgeBase
+    kb = await db.get(KnowledgeBase, kb_id)
+    if not kb or kb.is_deleted:
+        raise HTTPException(status_code=404, detail="Knowledge base not found")
+    docs_result = await db.execute(select(Document).where(Document.kb_id == kb_id, Document.is_deleted == False, Document.status.in_(["READY", "FAILED"])))
+    docs = docs_result.scalars().all()
+    jobs = []
+    for doc in docs:
+        try:
+            from app.workers.celery_app import reparse_document
+            jobs.append({"document_id": str(doc.id), "job_id": reparse_document.delay(str(doc.id), str(kb_id)).id})
+        except Exception as e:
+            jobs.append({"document_id": str(doc.id), "error": str(e)})
+    return {"message": f"Reindex {len(jobs)} docs", "kb_id": str(kb_id), "jobs": jobs}
+
+
+@router.get("/kbs/{kb_id}/consistency")
+async def check_consistency(kb_id: uuid.UUID, dry_run: bool = True):
+    """检查知识库 PostgreSQL ↔ Qdrant 一致性"""
+    from app.services.consistency.checker import check_index_consistency, repair_index
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import Session
+    engine = create_engine(settings.DATABASE_URL_SYNC, pool_pre_ping=True)
+    db_sync = Session(engine)
+    try:
+        if dry_run:
+            return {"dry_run": True, "report": check_index_consistency(str(kb_id), db_sync).to_dict()}
+        return repair_index(str(kb_id), db_sync, dry_run=False)
+    finally:
+        db_sync.close()
