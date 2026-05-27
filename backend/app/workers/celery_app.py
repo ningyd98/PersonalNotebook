@@ -243,11 +243,33 @@ def ingest_document(self, document_id: str, kb_id: str, options: dict = None):
 
         try:
             cversion = version if version > 0 else (doc.document_version or 1)
-            for c in chunks:
-                c["version_id"] = cversion
-                c["tenant_id"] = "default"
-                c["chunk_id"] = str(c.get("chunk_id", ""))
-            eids = asyncio.new_event_loop().run_until_complete(qdrant.upsert_chunks(chunks, kb_id))
+            # Query freshly-created DB chunks to get real IDs
+            db_chunks = db.query(DocumentChunk).filter(
+                DocumentChunk.document_id == doc.id,
+                DocumentChunk.version_id == cversion,
+            ).order_by(DocumentChunk.chunk_index).all()
+            # Build Qdrant payload with real DB IDs
+            qdrant_chunks = []
+            for i, dc in enumerate(db_chunks):
+                chunk_data = chunks[i] if i < len(chunks) else {}
+                qdrant_chunks.append({
+                    "embedding": chunk_data.get("embedding", all_vectors[i] if i < len(all_vectors) else []),
+                    "document_id": str(doc.id),
+                    "kb_id": str(kb_id),
+                    "chunk_index": dc.chunk_index,
+                    "content": dc.content or "",
+                    "content_hash": dc.content_hash or "",
+                    "section_path": dc.section_path or "",
+                    "page_number": dc.page_number,
+                    "slide_number": dc.slide_number,
+                    "source_type": chunk_data.get("source_type", "text"),
+                    "filename": doc.filename,
+                    "metadata_json": chunk_data.get("metadata_json", {}),
+                    "version_id": cversion,
+                    "tenant_id": "default",
+                    "chunk_id": str(dc.id),
+                })
+            eids = asyncio.new_event_loop().run_until_complete(qdrant.upsert_chunks(qdrant_chunks, kb_id))
             chunk_objs = db.query(DocumentChunk).filter(
                 DocumentChunk.document_id == doc.id
             ).order_by(DocumentChunk.chunk_index).all()
@@ -318,7 +340,7 @@ def ingest_document(self, document_id: str, kb_id: str, options: dict = None):
             d = db.get(Document, document_id)
             if d:
                 d.parse_status = "failed"
-                _transition_doc(d, "FAILED", str(e)[:200])
+                _transition_doc(db, d, "FAILED", str(e)[:200])
         except Exception:
             pass
         raise
@@ -332,18 +354,10 @@ def ingest_document(self, document_id: str, kb_id: str, options: dict = None):
 
 
 def _deactivate_old_version(qdrant, document_id: str, new_version: int):
-    """将 Qdrant 中旧版本标记为 is_active=False"""
+    """先标记 new_version is_active=True，再标记 version_id != new_version 为 is_active=False"""
     from qdrant_client.http import models as qm
     try:
-        qdrant.client.set_payload(
-            collection_name=qdrant.collection_name,
-            payload={"is_active": False},
-            points=qm.FilterSelector(
-                filter=qm.Filter(must=[
-                    qm.FieldCondition(key="document_id", match=qm.MatchValue(value=document_id)),
-                ])
-            ),
-        )
+        # Step 1: Ensure new version vectors are active
         qdrant.client.set_payload(
             collection_name=qdrant.collection_name,
             payload={"is_active": True},
@@ -354,8 +368,27 @@ def _deactivate_old_version(qdrant, document_id: str, new_version: int):
                 ])
             ),
         )
-    except Exception:
-        pass
+        logger.info(f"Activated version {new_version} for doc {document_id}")
+    except Exception as e:
+        logger.warning(f"Failed to activate new_version={new_version} for doc {document_id}: {e}")
+        raise
+
+    try:
+        # Step 2: Deactivate old versions (version_id != new_version)
+        qdrant.client.set_payload(
+            collection_name=qdrant.collection_name,
+            payload={"is_active": False},
+            points=qm.FilterSelector(
+                filter=qm.Filter(must=[
+                    qm.FieldCondition(key="document_id", match=qm.MatchValue(value=document_id)),
+                    qm.FieldCondition(key="version_id", match=qm.MatchExcept(value=new_version)),
+                ])
+            ),
+        )
+        logger.info(f"Deactivated old versions for doc {document_id} (kept v{new_version})")
+    except Exception as e:
+        logger.warning(f"Failed to deactivate old versions for doc {document_id}: {e}")
+        raise
 
 
 # ─── reparse — 真正双缓冲 ───────────────────────────────

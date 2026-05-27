@@ -126,11 +126,11 @@ class QdrantService:
                     match=qdrant_models.MatchValue(value=str(tenant_id)),
                 )
             )
-        # Filter: only active version chunks (is_active != False)
+        # Filter: only active version chunks
         must_conditions.append(
             qdrant_models.FieldCondition(
                 key="is_active",
-                match=qdrant_models.MatchExcept(value=False),
+                match=qdrant_models.MatchValue(value=True),
             )
         )
 

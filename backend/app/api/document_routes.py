@@ -531,18 +531,16 @@ async def get_quality_report(doc_id: uuid.UUID, db: AsyncSession = Depends(get_d
 # ================================================================
 @router.post("/documents/{doc_id}/reindex")
 async def reindex_document(doc_id: uuid.UUID, db: AsyncSession = Depends(get_db)):
-    """重新索引文档 — 双缓冲策略：先建新版本，校验后切换 active_version"""
+    """重新索引文档 — API 只设置 REINDEXING，new_version 由 worker 统一计算"""
     doc = await db.get(Document, doc_id)
     if not doc or doc.is_deleted:
         raise HTTPException(status_code=404, detail="Document not found")
     doc.status = "REINDEXING"
-    doc.document_version = (doc.document_version or 0) + 1
-    doc.active_version = 0
     await db.commit()
     try:
         from app.workers.celery_app import reparse_document
-        r = reparse_document.delay(str(doc.id), str(doc.kb_id), {"version": doc.document_version, "reindex": True})
-        return {"message": "Reindex submitted", "document_id": str(doc.id), "job_id": r.id, "new_version": doc.document_version}
+        r = reparse_document.delay(str(doc.id), str(doc.kb_id))
+        return {"message": "Reindex submitted", "document_id": str(doc.id), "job_id": r.id}
     except Exception as e:
         doc.status = "READY"; await db.commit()
         raise HTTPException(status_code=500, detail=str(e))
