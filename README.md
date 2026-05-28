@@ -473,6 +473,36 @@ Settings → 反馈问题 → 复制诊断信息 → 提交到 [GitHub Issues](h
 bash scripts/phase2d_acceptance_check.sh
 ```
 
+## Phase 2E — 真实设备实测
+
+### 状态
+⚠️ 待 Docker 安装 + Android 真机连接后执行。
+
+### 测试报告
+[docs/PHASE_2E_TEST_REPORT.md](docs/PHASE_2E_TEST_REPORT.md)
+
+### 环境报告
+```bash
+bash scripts/phase2e_device_test_report.sh
+# 输出到 tmp/phase2e_env_report.txt
+```
+
+### 真机 Checklist
+- [macOS](release/checklists/MACOS_TEST.md)
+- [Android](release/checklists/ANDROID_TEST.md)
+
+### 已验证通过
+- ✅ `phase2d_acceptance_check.sh`: 37 passed
+- ✅ `app_release_prepare.sh`: passed
+- ✅ `flutter test`: All tests passed
+- ✅ DiagnosticsService 脱敏
+
+### 待完成
+- ❌ `brew install --cask docker` — Core 前置依赖
+- ❌ Android SDK 36 升级 — Flutter 3.44 要求
+- ❌ Android 真机连接 — 移动端测试
+- ❌ `flutter run -d macos` — 桌面端配对闭环
+
 ## 许可证
 
 MIT
