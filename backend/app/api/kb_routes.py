@@ -26,7 +26,7 @@ def _verify_kb_ownership(db_result, current_user_id: str = DEFAULT_USER_ID):
 
 
 @router.post("/kbs", response_model=KBResponse)
-async def create_kb(req: KBCreate, db: AsyncSession = Depends(get_db)):
+async def create_kb(req: KBCreate, db: AsyncSession = Depends(get_db), current_device: dict = Depends(get_current_device)):
     kb = KnowledgeBase(
         user_id=uuid.UUID(DEFAULT_USER_ID),
         name=req.name,
@@ -48,6 +48,7 @@ async def list_kbs(
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=20, ge=1, le=100),
     db: AsyncSession = Depends(get_db),
+    current_device: dict = Depends(get_current_device),
 ):
     user_id = uuid.UUID(DEFAULT_USER_ID)
     # 总数
@@ -107,7 +108,7 @@ async def list_kbs(
 
 
 @router.get("/kbs/{kb_id}")
-async def get_kb(kb_id: uuid.UUID, db: AsyncSession = Depends(get_db)):
+async def get_kb(kb_id: uuid.UUID, db: AsyncSession = Depends(get_db), current_device: dict = Depends(get_current_device)):
     kb = await db.get(KnowledgeBase, kb_id)
     if not kb or kb.is_deleted:
         raise HTTPException(status_code=404, detail="Knowledge base not found")
@@ -141,7 +142,7 @@ async def get_kb(kb_id: uuid.UUID, db: AsyncSession = Depends(get_db)):
 
 
 @router.put("/kbs/{kb_id}")
-async def update_kb(kb_id: uuid.UUID, req: KBUpdate, db: AsyncSession = Depends(get_db)):
+async def update_kb(kb_id: uuid.UUID, req: KBUpdate, db: AsyncSession = Depends(get_db), current_device: dict = Depends(get_current_device)):
     kb = await db.get(KnowledgeBase, kb_id)
     if not kb or kb.is_deleted:
         raise HTTPException(status_code=404, detail="Knowledge base not found")
@@ -154,7 +155,7 @@ async def update_kb(kb_id: uuid.UUID, req: KBUpdate, db: AsyncSession = Depends(
 
 
 @router.delete("/kbs/{kb_id}")
-async def delete_kb(kb_id: uuid.UUID, db: AsyncSession = Depends(get_db)):
+async def delete_kb(kb_id: uuid.UUID, db: AsyncSession = Depends(get_db), current_device: dict = Depends(get_current_device)):
     kb = await db.get(KnowledgeBase, kb_id)
     if not kb or kb.is_deleted:
         raise HTTPException(status_code=404, detail="Knowledge base not found")

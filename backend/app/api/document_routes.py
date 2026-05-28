@@ -16,6 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_settings
 from app.db.session import get_db
+from app.dependencies.auth import get_current_device
 from app.models.models import (
     Document, DocumentBlock, DocumentChunk, DocumentAsset,
     IngestJob, TableObject, KnowledgeBase,
@@ -358,7 +359,7 @@ async def list_documents(
 
 
 @router.get("/documents/{doc_id}")
-async def get_document(doc_id: uuid.UUID, db: AsyncSession = Depends(get_db)):
+async def get_document(doc_id: uuid.UUID, db: AsyncSession = Depends(get_db), current_device: dict = Depends(get_current_device)):
     doc = await db.get(Document, doc_id)
     if not doc or doc.is_deleted:
         raise HTTPException(status_code=404, detail="Document not found")
@@ -499,7 +500,7 @@ async def get_document_tables(doc_id: uuid.UUID, db: AsyncSession = Depends(get_
 
 
 @router.get("/documents/{doc_id}/quality-report")
-async def get_quality_report(doc_id: uuid.UUID, db: AsyncSession = Depends(get_db)):
+async def get_quality_report(doc_id: uuid.UUID, db: AsyncSession = Depends(get_db), current_device: dict = Depends(get_current_device)):
     doc = await db.get(Document, doc_id)
     if not doc:
         raise HTTPException(status_code=404, detail="Document not found")
@@ -537,7 +538,7 @@ async def get_quality_report(doc_id: uuid.UUID, db: AsyncSession = Depends(get_d
 # Reindex & Consistency APIs — Phase 1.6
 # ================================================================
 @router.post("/documents/{doc_id}/reindex")
-async def reindex_document(doc_id: uuid.UUID, db: AsyncSession = Depends(get_db)):
+async def reindex_document(doc_id: uuid.UUID, db: AsyncSession = Depends(get_db), current_device: dict = Depends(get_current_device)):
     """重新索引文档 — API 只设置 REINDEXING，new_version 由 worker 统一计算"""
     doc = await db.get(Document, doc_id)
     if not doc or doc.is_deleted:

@@ -1,4 +1,4 @@
-"""Pairing API — Phase 2A-v2 持久化设备配对"""
+"""Pairing API — Phase 2B 持久化设备配对"""
 
 import hashlib
 import secrets
@@ -8,7 +8,7 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
-from sqlalchemy import or_, select
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.session import get_db
@@ -42,20 +42,6 @@ def _as_aware(dt: datetime) -> datetime:
     return dt if dt.tzinfo is not None else dt.replace(tzinfo=timezone.utc)
 
 
-def _device_payload(device: PairedDevice) -> dict:
-    return {
-        "device_id": str(device.id),
-        "tenant_id": device.tenant_id,
-        "device_name": device.device_name,
-        "token_hash_prefix": device.token_hash[:16],
-        "created_at": device.created_at.isoformat() if device.created_at else None,
-        "expires_at": device.expires_at.isoformat() if device.expires_at else None,
-        "revoked_at": device.revoked_at.isoformat() if device.revoked_at else None,
-        "last_seen_at": device.last_seen_at.isoformat() if device.last_seen_at else None,
-        "metadata_json": device.metadata_json,
-    }
-
-
 @router.post("/pair/create")
 async def create_pair_token(req: PairCreateRequest, db: AsyncSession = Depends(get_db)):
     """桌面端生成配对 Token。数据库只保存 sha256(token)，明文 token 只返回一次。"""
@@ -65,10 +51,8 @@ async def create_pair_token(req: PairCreateRequest, db: AsyncSession = Depends(g
     expires_at = now + timedelta(hours=req.expires_hours)
 
     device = PairedDevice(
-        tenant_id=req.tenant_id,
-        device_name=req.device_name,
-        token_hash=token_hash,
-        expires_at=expires_at,
+        tenant_id=req.tenant_id, device_name=req.device_name,
+        token_hash=token_hash, expires_at=expires_at,
         metadata_json=req.metadata_json,
     )
     db.add(device)
@@ -84,25 +68,18 @@ async def create_pair_token(req: PairCreateRequest, db: AsyncSession = Depends(g
         "expires_at": expires_at.isoformat(),
     }
     return {
-        "success": True,
-        "device_id": str(device.id),
-        "tenant_id": req.tenant_id,
-        "token": token,
-        "expires_at": expires_at.isoformat(),
+        "success": True, "device_id": str(device.id), "tenant_id": req.tenant_id,
+        "token": token, "expires_at": expires_at.isoformat(),
         "pairing_content": pairing_content,
-        "data": {
-            "device_id": str(device.id),
-            "tenant_id": req.tenant_id,
-            "token": token,
-            "expires_at": expires_at.isoformat(),
-            "pairing_content": pairing_content,
-        },
+        "data": {"device_id": str(device.id), "tenant_id": req.tenant_id,
+                 "token": token, "expires_at": expires_at.isoformat(),
+                 "pairing_content": pairing_content},
     }
 
 
 @router.post("/pair/verify")
 async def verify_pair_token(req: PairVerifyRequest, db: AsyncSession = Depends(get_db)):
-    """移动端验证配对 Token。revoke / expired 后必须失败。"""
+    """移动端验证配对 Token。revoke / expired 后必须 401。不返回 token_hash。"""
     token_hash = _hash_token(req.token)
     now = _utcnow()
     result = await db.execute(select(PairedDevice).where(PairedDevice.token_hash == token_hash))
@@ -113,53 +90,38 @@ async def verify_pair_token(req: PairVerifyRequest, db: AsyncSession = Depends(g
         raise HTTPException(status_code=401, detail="Pairing token revoked")
     if _as_aware(device.expires_at) < now:
         raise HTTPException(status_code=401, detail="Pairing token expired")
-
     if req.device_name:
         device.device_name = req.device_name
     device.last_seen_at = now
     await db.commit()
     await db.refresh(device)
-
-    return {
-        "success": True,
-        "verified": True,
-        "tenant_id": device.tenant_id,
-        "device_id": str(device.id),
-        "token_hash_prefix": device.token_hash[:16],
-        "data": {
-            "verified": True,
-            "tenant_id": device.tenant_id,
-            "device_id": str(device.id),
-            "token_hash_prefix": device.token_hash[:16],
-        },
-    }
+    return {"success": True, "verified": True, "tenant_id": device.tenant_id,
+            "device_id": str(device.id), "data": {"verified": True,
+            "tenant_id": device.tenant_id, "device_id": str(device.id)}}
 
 
 @router.get("/devices")
 async def list_devices(request: Request, db: AsyncSession = Depends(get_db)):
-    """列出设备列表 — 仅 localhost 可访问。不返回 token_hash_prefix。"""
+    """列出设备列表 — 仅 localhost。不返回 token_hash。"""
     host = request.client.host if request.client else ""
     if host not in ("127.0.0.1", "localhost", "::1"):
         raise HTTPException(status_code=403, detail="Device list only available from localhost")
     result = await db.execute(select(PairedDevice).order_by(PairedDevice.created_at.desc()))
-    devices = [
-        {"device_id": str(d.id), "tenant_id": d.tenant_id, "device_name": d.device_name,
-         "created_at": d.created_at.isoformat() if d.created_at else None,
-         "expires_at": d.expires_at.isoformat() if d.expires_at else None,
-         "revoked_at": d.revoked_at.isoformat() if d.revoked_at else None,
-         "last_seen_at": d.last_seen_at.isoformat() if d.last_seen_at else None}
-        for d in result.scalars().all()
-    ]
+    devices = [{"device_id": str(d.id), "tenant_id": d.tenant_id, "device_name": d.device_name,
+                "created_at": d.created_at.isoformat() if d.created_at else None,
+                "expires_at": d.expires_at.isoformat() if d.expires_at else None,
+                "revoked_at": d.revoked_at.isoformat() if d.revoked_at else None,
+                "last_seen_at": d.last_seen_at.isoformat() if d.last_seen_at else None}
+               for d in result.scalars().all()]
     return {"success": True, "devices": devices, "data": {"devices": devices}}
 
 
 @router.delete("/devices/{device_id}")
 async def revoke_device(device_id: str, request: Request, db: AsyncSession = Depends(get_db)):
-    """按 device_id (UUID) 撤销设备。仅 localhost 可访问。"""
+    """按 device_id (UUID) 撤销设备。仅 localhost。"""
     host = request.client.host if request.client else ""
     if host not in ("127.0.0.1", "localhost", "::1"):
         raise HTTPException(status_code=403, detail="Device revocation only available from localhost")
-    now = _utcnow()
     try:
         did = uuid.UUID(device_id)
     except ValueError:
@@ -168,6 +130,6 @@ async def revoke_device(device_id: str, request: Request, db: AsyncSession = Dep
     device = result.scalars().first()
     if not device:
         raise HTTPException(status_code=404, detail="Device not found")
-    device.revoked_at = now
+    device.revoked_at = _utcnow()
     await db.commit()
     return {"success": True, "revoked": True, "device_id": str(device.id)}

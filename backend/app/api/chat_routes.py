@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_settings
 from app.db.session import get_db
+from app.dependencies.auth import get_current_device
 from app.models.models import Conversation, Feedback, Message
 from app.schemas.schemas import (
     ChatRequest, ChatResponse, Citation, FeedbackRequest,
@@ -43,7 +44,7 @@ def _parse_uuid(value: object) -> uuid.UUID | None:
 
 
 @router.post("/chat", response_model=ChatResponse)
-async def chat(req: ChatRequest, db: AsyncSession = Depends(get_db)):
+async def chat(req: ChatRequest, db: AsyncSession = Depends(get_db), current_device: dict = Depends(get_current_device)):
     start_time = time.time()
     kb_id = str(req.kb_id)
     user_id = uuid.UUID(DEFAULT_USER_ID)
@@ -287,7 +288,7 @@ def _verify_citations(generated_citations: list[dict], evidence_pack: list[dict]
 # Conversations
 # ================================================================
 @router.get("/conversations")
-async def list_conversations(db: AsyncSession = Depends(get_db)):
+async def list_conversations(db: AsyncSession = Depends(get_db), current_device: dict = Depends(get_current_device)):
     user_id = uuid.UUID(DEFAULT_USER_ID)
     result = await db.execute(
         select(Conversation)
@@ -390,7 +391,7 @@ async def submit_feedback(msg_id: uuid.UUID, req: FeedbackRequest, db: AsyncSess
 # Debug Chat API — Phase 1.6
 # ================================================================
 @router.post("/chat/debug")
-async def chat_debug(req: ChatRequest, db: AsyncSession = Depends(get_db)):
+async def chat_debug(req: ChatRequest, db: AsyncSession = Depends(get_db), current_device: dict = Depends(get_current_device)):
     """返回完整 RAG trace 用于排查召回/排序/生成质量"""
     start_time = time.time()
     kb_id = str(req.kb_id)
