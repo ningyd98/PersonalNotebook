@@ -435,6 +435,44 @@ cd app/personal_notebook_app && flutter build macos --release
 bash scripts/app_device_smoke_test.sh
 ```
 
+## Phase 2D — 内测发布与真机验证
+
+### 状态
+Flutter App `0.2.0+2`, Backend `0.2.0`。代码/脚本就绪，真机实测待进行。
+
+### 真机验证入口
+详见 [release/checklists/](release/checklists/):
+- [macOS](release/checklists/MACOS_TEST.md)
+- [Android](release/checklists/ANDROID_TEST.md)
+- [iOS](release/checklists/IOS_TESTFLIGHT.md)
+- [Windows](release/checklists/WINDOWS_TEST.md)
+
+### Android Debug APK
+```bash
+flutter build apk --debug
+adb install build/app/outputs/flutter-apk/app-debug.apk
+```
+
+### 网络预检
+```bash
+bash scripts/network_preflight.sh
+```
+
+### 反馈入口
+Settings → 反馈问题 → 复制诊断信息 → 提交到 [GitHub Issues](https://github.com/ningyd98/PersonalNotebook/issues/new/choose)
+
+### 文档索引
+- [Beta Test Plan](docs/BETA_TEST_PLAN.md)
+- [Security & Privacy](docs/SECURITY_PRIVACY.md)
+- [User Feedback Template](docs/USER_FEEDBACK_TEMPLATE.md)
+- [App Troubleshooting](docs/APP_TROUBLESHOOTING.md)
+- [Phase 2C Release](docs/PHASE_2C_RELEASE.md)
+
+### Phase 2D 验收
+```bash
+bash scripts/phase2d_acceptance_check.sh
+```
+
 ## 许可证
 
 MIT

@@ -1,0 +1,8 @@
+# Android Release Signing Configuration
+# 复制此文件为 key.properties，填入真实值。
+# 不要将 key.properties 或 .jks 文件提交到 git！
+
+storePassword=YOUR_STORE_PASSWORD
+keyPassword=YOUR_KEY_PASSWORD
+keyAlias=upload
+storeFile=../upload-keystore.jks
