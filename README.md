@@ -310,6 +310,52 @@ open http://localhost:9001
 bash scripts/e2e_smoke_test.sh
 ```
 
+## Phase 2B — Flutter App 验收
+
+### Flutter App 运行
+
+```bash
+cd app/personal_notebook_app
+flutter pub get
+flutter run -d macos   # macOS
+flutter run -d windows # Windows
+flutter run -d android # Android (需连接设备)
+flutter run -d ios     # iOS (需 macOS + Xcode)
+```
+
+### Phase 2B 验收命令
+
+```bash
+# Backend
+pytest backend/tests/test_pairing.py -q   # 10 tests
+bash scripts/ci_check.sh                  # compileall + status check + flutter analyze
+
+# E2E (需 Docker + Core 运行)
+bash scripts/app_e2e_check.sh             # 17 steps incl. Bearer auth + 401 checks
+```
+
+### Mobile Pairing 流程
+
+1. 桌面端启动 Core: `docker compose up -d`
+2. 桌面端 `POST /auth/pair/create` → 获取 token
+3. 桌面端生成二维码 `{type, core_base_url, token, tenant_id, expires_at}`
+4. 移动端扫码 OR 手动输入 URL + Token
+5. 移动端 `POST /auth/pair/verify` 验证
+6. 后续请求 `Authorization: Bearer {token}`
+7. Token 撤销: `DELETE /auth/devices/{device_id}` (仅 localhost)
+
+### Desktop Runtime Manager
+
+```dart
+// app/personal_notebook_app/lib/services/runtime_manager.dart
+final rm = RuntimeManager();
+await rm.dockerVersion();            // docker --version
+await rm.startCore();                // docker compose up -d
+await rm.stopCore();                 // docker compose down
+await rm.composePs();                // docker compose ps
+await rm.composeLogs();              // docker compose logs --tail=200
+```
+
 ## 许可证
 
 MIT

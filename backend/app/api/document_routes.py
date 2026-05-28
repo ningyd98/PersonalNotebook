@@ -74,6 +74,7 @@ async def upload_document(
     kb_id: uuid.UUID,
     file: UploadFile = File(...),
     db: AsyncSession = Depends(get_db),
+    current_device: dict = Depends(get_current_device),
 ):
     """真实文件上传链路：hash → 去重 → MinIO → document → job → Celery"""
     kb = await db.get(KnowledgeBase, kb_id)
@@ -205,6 +206,7 @@ async def import_folder(
     folder_path: str = Form(...),
     recursive: bool = Form(default=True),
     db: AsyncSession = Depends(get_db),
+    current_device: dict = Depends(get_current_device),
 ):
     kb = await db.get(KnowledgeBase, kb_id)
     if not kb or kb.is_deleted:
@@ -302,6 +304,7 @@ async def list_documents(
     parse_status: Optional[str] = Query(default=None),
     keyword: Optional[str] = Query(default=None),
     db: AsyncSession = Depends(get_db),
+    current_device: dict = Depends(get_current_device),
 ):
     kb = await db.get(KnowledgeBase, kb_id)
     if not kb or kb.is_deleted:
@@ -398,7 +401,7 @@ async def get_document(doc_id: uuid.UUID, db: AsyncSession = Depends(get_db), cu
 
 
 @router.delete("/documents/{doc_id}")
-async def delete_document(doc_id: uuid.UUID, db: AsyncSession = Depends(get_db)):
+async def delete_document(doc_id: uuid.UUID, db: AsyncSession = Depends(get_db), current_device: dict = Depends(get_current_device)):
     doc = await db.get(Document, doc_id)
     if not doc or doc.is_deleted:
         raise HTTPException(status_code=404, detail="Document not found")
@@ -408,7 +411,7 @@ async def delete_document(doc_id: uuid.UUID, db: AsyncSession = Depends(get_db))
 
 
 @router.post("/documents/{doc_id}/reparse")
-async def reparse_document(doc_id: uuid.UUID, db: AsyncSession = Depends(get_db)):
+async def reparse_document(doc_id: uuid.UUID, db: AsyncSession = Depends(get_db), current_device: dict = Depends(get_current_device)):
     doc = await db.get(Document, doc_id)
     if not doc or doc.is_deleted:
         raise HTTPException(status_code=404, detail="Document not found")
@@ -422,7 +425,7 @@ async def reparse_document(doc_id: uuid.UUID, db: AsyncSession = Depends(get_db)
 
 
 @router.post("/documents/{doc_id}/reembed")
-async def reembed_document(doc_id: uuid.UUID, db: AsyncSession = Depends(get_db)):
+async def reembed_document(doc_id: uuid.UUID, db: AsyncSession = Depends(get_db), current_device: dict = Depends(get_current_device)):
     doc = await db.get(Document, doc_id)
     if not doc or doc.is_deleted:
         raise HTTPException(status_code=404, detail="Document not found")
@@ -435,7 +438,7 @@ async def reembed_document(doc_id: uuid.UUID, db: AsyncSession = Depends(get_db)
 # Document Detail Views
 # ================================================================
 @router.get("/documents/{doc_id}/blocks")
-async def get_document_blocks(doc_id: uuid.UUID, db: AsyncSession = Depends(get_db)):
+async def get_document_blocks(doc_id: uuid.UUID, db: AsyncSession = Depends(get_db), current_device: dict = Depends(get_current_device)):
     result = await db.execute(
         select(DocumentBlock).where(DocumentBlock.document_id == doc_id).order_by(DocumentBlock.created_at)
     )
@@ -455,7 +458,7 @@ async def get_document_blocks(doc_id: uuid.UUID, db: AsyncSession = Depends(get_
 
 
 @router.get("/documents/{doc_id}/chunks")
-async def get_document_chunks(doc_id: uuid.UUID, db: AsyncSession = Depends(get_db)):
+async def get_document_chunks(doc_id: uuid.UUID, db: AsyncSession = Depends(get_db), current_device: dict = Depends(get_current_device)):
     result = await db.execute(
         select(DocumentChunk).where(DocumentChunk.document_id == doc_id).order_by(DocumentChunk.chunk_index)
     )
@@ -474,7 +477,7 @@ async def get_document_chunks(doc_id: uuid.UUID, db: AsyncSession = Depends(get_
 
 
 @router.get("/documents/{doc_id}/assets")
-async def get_document_assets(doc_id: uuid.UUID, db: AsyncSession = Depends(get_db)):
+async def get_document_assets(doc_id: uuid.UUID, db: AsyncSession = Depends(get_db), current_device: dict = Depends(get_current_device)):
     result = await db.execute(
         select(DocumentAsset).where(DocumentAsset.document_id == doc_id)
     )
@@ -483,7 +486,7 @@ async def get_document_assets(doc_id: uuid.UUID, db: AsyncSession = Depends(get_
 
 
 @router.get("/documents/{doc_id}/tables")
-async def get_document_tables(doc_id: uuid.UUID, db: AsyncSession = Depends(get_db)):
+async def get_document_tables(doc_id: uuid.UUID, db: AsyncSession = Depends(get_db), current_device: dict = Depends(get_current_device)):
     result = await db.execute(
         select(TableObject).where(TableObject.document_id == doc_id)
     )
@@ -555,7 +558,7 @@ async def reindex_document(doc_id: uuid.UUID, db: AsyncSession = Depends(get_db)
 
 
 @router.post("/kbs/{kb_id}/reindex")
-async def reindex_kb(kb_id: uuid.UUID, db: AsyncSession = Depends(get_db)):
+async def reindex_kb(kb_id: uuid.UUID, db: AsyncSession = Depends(get_db), current_device: dict = Depends(get_current_device)):
     """重新索引整个知识库"""
     from app.models.models import KnowledgeBase
     kb = await db.get(KnowledgeBase, kb_id)
@@ -574,7 +577,7 @@ async def reindex_kb(kb_id: uuid.UUID, db: AsyncSession = Depends(get_db)):
 
 
 @router.get("/kbs/{kb_id}/consistency")
-async def check_consistency(kb_id: uuid.UUID, dry_run: bool = True):
+async def check_consistency(kb_id: uuid.UUID, dry_run: bool = True, db = Depends(get_db), current_device: dict = Depends(get_current_device)):
     """检查知识库 PostgreSQL ↔ Qdrant 一致性"""
     from app.services.consistency.checker import check_index_consistency, repair_index
     from sqlalchemy import create_engine

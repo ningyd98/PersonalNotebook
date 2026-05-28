@@ -43,7 +43,15 @@ KB=$(api_post "$API/api/kbs" -d '{"name":"e2e-app-test"}')
 KB_ID=$(echo "$KB" | json_val "[\"id\"]")
 check "create kb" '[ -n "$KB_ID" ]'
 
-echo; echo "--- 6. Upload ---"
+echo; echo "--- 6. No auth upload → 401 ---"
+CODE=$(http_code -X POST "$API/api/kbs/$KB_ID/documents/upload" -F "file=@/dev/null" 2>/dev/null)
+check "POST upload no auth → 401" '[ "$CODE" = "401" ]' "got $CODE"
+
+echo; echo "--- 7. No auth list docs → 401 ---"
+CODE=$(http_code "$API/api/kbs/$KB_ID/documents")
+check "GET docs no auth → 401" '[ "$CODE" = "401" ]' "got $CODE"
+
+echo; echo "--- 8. Upload (Bearer) ---"
 TMP_MD=$(mktemp /tmp/e2e_app_XXXX.md)
 cat > "$TMP_MD" << 'MDEOF'
 ---
@@ -57,7 +65,7 @@ DOC_ID=$(echo "$UP" | json_val "[\"document_id\"]")
 check "upload" '[ -n "$DOC_ID" ]'
 rm -f "$TMP_MD"
 
-echo; echo "--- 7. Wait READY ---"
+echo; echo "--- 9. Wait READY ---"
 READY=0; S=""
 for i in $(seq 1 30); do
   S=$(api_get "$API/api/documents/$DOC_ID" | json_val "[\"status\"]")
@@ -66,33 +74,41 @@ for i in $(seq 1 30); do
 done
 check "doc READY" '[ "$READY" = "1" ]' "status=$S"
 
-echo; echo "--- 8. Chat (Bearer) ---"
+echo; echo "--- 10. Chat (Bearer) ---"
 CHAT=$(api_post "$API/api/chat" -d '{"kb_id":"'"$KB_ID"'","question":"What is Q-learning?","top_k":8,"use_rerank":true,"strict_citation":true}')
 CIT=$(echo "$CHAT" | python3 -c "import sys,json;print(len(json.load(sys.stdin).get('citations',[])))" 2>/dev/null || echo 0)
 check "chat citations > 0" '[ "$CIT" -gt 0 ]' "citations=$CIT"
 
-echo; echo "--- 9. Reindex ---"
+echo; echo "--- 11. Reindex ---"
 api_post "$API/api/documents/$DOC_ID/reindex" > /dev/null
 sleep 6
 AV=$(api_get "$API/api/documents/$DOC_ID" | json_val "[\"active_version\"]")
 check "active_version >= 2" '[ "$AV" -ge 2 ]' "av=$AV"
 
-echo; echo "--- 10. Citation version check ---"
+echo; echo "--- 12. Citation version check ---"
 CHAT2=$(api_post "$API/api/chat" -d '{"kb_id":"'"$KB_ID"'","question":"What is Q-learning?","top_k":8,"use_rerank":true,"strict_citation":true}')
 CV=$(echo "$CHAT2" | python3 -c "import sys,json;cs=json.load(sys.stdin).get('citations',[]);print(cs[0].get('version_id','?') if cs else '?')" 2>/dev/null)
 check "citation v$CV == active v$AV" '[ "$CV" = "$AV" ]'
 
-echo; echo "--- 11. Revoke ---"
+echo; echo "--- 13. Revoke ---"
 REV=$(curl -sf -X DELETE "$API/auth/devices/$DID" 2>/dev/null || echo '{}')
 check "device revoked" '[ "$(echo "$REV" | json_val "[\"revoked\"]")" = "True" ]'
 
-echo; echo "--- 12. Revoked verify → 401 ---"
+echo; echo "--- 14. Revoked verify → 401 ---"
 CODE=$(http_code -X POST "$API/auth/pair/verify" -H "Content-Type: application/json" -d "{\"token\":\"$TOKEN\"}")
 check "revoked verify → 401" '[ "$CODE" = "401" ]' "got $CODE"
 
-echo; echo "--- 13. Revoked GET /kbs → 401 ---"
-CODE2=$(http_code -H "Authorization: Bearer $TOKEN" "$API/api/kbs")
-check "revoked GET /kbs → 401" '[ "$CODE2" = "401" ]' "got $CODE2"
+echo; echo "--- 15. Revoked GET /kbs → 401 ---"
+CODE=$(http_code -H "Authorization: Bearer $TOKEN" "$API/api/kbs")
+check "revoked GET /kbs → 401" '[ "$CODE" = "401" ]' "got $CODE"
+
+echo; echo "--- 16. Revoked GET docs → 401 ---"
+CODE=$(http_code -H "Authorization: Bearer $TOKEN" "$API/api/kbs/$KB_ID/documents")
+check "revoked GET docs → 401" '[ "$CODE" = "401" ]' "got $CODE"
+
+echo; echo "--- 17. Revoked upload → 401 ---"
+CODE=$(http_code -X POST -H "Authorization: Bearer $TOKEN" "$API/api/kbs/$KB_ID/documents/upload" -F "file=@/dev/null" 2>/dev/null)
+check "revoked POST upload → 401" '[ "$CODE" = "401" ]' "got $CODE"
 
 echo; echo "=========================================="
 echo " Results: $PASS passed, $FAIL failed"
