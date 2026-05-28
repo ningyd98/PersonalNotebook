@@ -1,0 +1,22 @@
+name: Feature Request
+description: 功能建议
+labels: [enhancement]
+body:
+  - type: textarea
+    attributes:
+      label: 场景
+      description: 在什么场景下需要这个功能
+  - type: textarea
+    attributes:
+      label: 需求描述
+  - type: textarea
+    attributes:
+      label: 价值
+  - type: dropdown
+    attributes:
+      label: 优先级
+      options: [高, 中, 低]
+  - type: textarea
+    attributes:
+      label: 替代方案
+      description: 目前的临时解决方法

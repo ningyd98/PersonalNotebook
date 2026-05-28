@@ -1,0 +1,38 @@
+name: Beta Feedback
+description: 内测体验反馈
+labels: [beta-feedback]
+body:
+  - type: input
+    attributes:
+      label: 设备
+      placeholder: 例: Samsung S24 / iPhone 15 / MacBook Pro M3
+  - type: input
+    attributes:
+      label: 系统版本
+      placeholder: 例: Android 14 / iOS 17.5 / macOS 14.5
+  - type: dropdown
+    attributes:
+      label: 配对是否成功
+      options: ["是", "否 — 卡在配对"]
+  - type: dropdown
+    attributes:
+      label: 问答是否成功
+      options: ["是", "否 — 卡在聊天"]
+  - type: dropdown
+    attributes:
+      label: 文档上传是否成功
+      options: ["是", "否 — 卡在上传", "未测试"]
+  - type: dropdown
+    attributes:
+      label: 体验评分 (1-5)
+      options: ["1", "2", "3", "4", "5"]
+  - type: textarea
+    attributes:
+      label: 主要卡点
+  - type: dropdown
+    attributes:
+      label: 是否愿意继续跟进
+      options: ["是", "否"]
+  - type: textarea
+    attributes:
+      label: 建议

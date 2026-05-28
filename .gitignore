@@ -8,3 +8,20 @@ build/
 .flutter-plugins-dependencies
 **/ephemeral/
 android/.gradle/
+
+# Release artifacts
+*.apk
+*.aab
+*.ipa
+*.app
+*.dmg
+*.exe
+*.msix
+*.jks
+*.keystore
+keystore
+key.properties
+android/key.properties
+app/personal_notebook_app/android/key.properties
+app/personal_notebook_app/android/*.jks
+app/personal_notebook_app/android/*.keystore
