@@ -1,0 +1,10 @@
+__pycache__/
+*.pyc
+.DS_Store
+
+.dart_tool/
+build/
+.flutter-plugins
+.flutter-plugins-dependencies
+**/ephemeral/
+android/.gradle/

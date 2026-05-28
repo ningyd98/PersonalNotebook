@@ -1,0 +1,36 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install backend
+        run: |
+          cd backend
+          pip install -e ".[dev]"
+      - name: Ruff
+        run: python -m ruff check backend/app model-gateway --ignore E501,F401,E402
+      - name: Pytest
+        run: python -m pytest backend/tests/test_pairing.py -q
+
+  flutter:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+      - name: Flutter check
+        run: |
+          cd app/personal_notebook_app
+          flutter pub get
+          flutter analyze
+          flutter test
