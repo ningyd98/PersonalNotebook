@@ -4,79 +4,91 @@
 
 | 项目 | 结果 | 说明 |
 |------|------|------|
-| macOS App | ⚠️ 未测 | 代码就绪，需 `flutter run -d macos` |
-| Android 真机 | ⚠️ 未测 | 无 Android 设备连接 (`adb devices` 为空) |
-| iOS no-codesign | ⚠️ 未测 | Xcode 26.5 可用，待执行 `flutter build ios --no-codesign` |
-| Windows build | ⚠️ 未测 | 无 Windows 机器 |
-| Core 局域网访问 | ❌ 未运行 | Docker 未安装 (brew install --cask docker) |
-| Pairing | ❌ 未运行 | Core 不可用 |
-| KB 创建 | ❌ 未运行 | Core 不可用 |
-| 文档上传 | ❌ 未运行 | Core 不可用 |
-| Chat citations | ❌ 未运行 | Core 不可用 |
-| Token revoke | ❌ 未运行 | Core 不可用 |
-| 诊断脱敏 | ✅ 已通过 | DiagnosticsService 代码验证通过 |
+| macOS App 构建 | ⚠️ 未测 | `flutter build macos` 需完整 GUI 会话 |
+| macOS App 运行 | ⚠️ 未测 | 需 `flutter run -d macos` |
+| Android 真机 | ❌ 未测 | 无 Android 设备连接 (`adb devices` 为空) |
+| iOS no-codesign | ⚠️ 未测 | Xcode 26.5 可用 |
+| Windows build | ❌ 未测 | 无 Windows 机器 |
+| Core 局域网访问 | ✅ 通过 | Docker 正常, 所有服务健康 |
+| Pairing | ✅ 通过 | create + verify 通过 |
+| Pairing 401 保护 | ✅ 通过 | 无 token 返回 401 (3 项检查) |
+| KB 创建 | ✅ 通过 | |
+| 文档上传 | ✅ 通过 | |
+| 文档 READY | ✅ 通过 | Celery 正常处理 (parsing → chunking → embedding → indexing) |
+| Chat citations | ⚠️ 部分 | 模型网关未运行 (Ollama 不可用)，回答无引用 |
+| Reindex | ✅ 通过 | active_version 从 1 更新到 2 |
+| Token revoke | ✅ 通过 | 撤消后 3 项 401 检查全部通过 |
+| 诊断脱敏 | ✅ 通过 | 代码验证 |
+| E2E 总通过 | **16/17** | 仅模型网关相关项未通过 |
 
 ## 测试环境
 
 | 环境项 | 值 |
 |--------|-----|
 | macOS | 26.4.1 (darwin-arm64) |
-| Android | SDK 34.0.0 (需 SDK 36 for Flutter 3.44) |
-| iOS | Xcode 26.5 (无模拟器 runtime) |
-| Windows | 无 |
 | Flutter | 3.44.0 stable |
-| Docker | 未安装 |
-| Core URL | 不可用 |
+| Xcode | 26.5 (Build 17F42) |
+| Docker | 29.5.2 |
+| Docker Compose | v5.1.3 |
+| PostgreSQL | 16 (Docker, healthy) |
+| Qdrant | latest (Docker, healthy) |
+| MinIO | latest (Docker, healthy) |
+| Redis | 7-alpine (Docker, healthy) |
+| Backend | v0.2.0, uvicorn 0.48.0 |
+| Celery | worker running |
+| 局域网 IP | 192.168.3.107 |
 | App Version | 0.2.0+2 |
-| Backend Version | 0.2.0 |
 
 ## 执行命令
 
 ```bash
-# ✅ 已执行通过
-git log --oneline -5                           # ca9f20c
-bash scripts/phase2d_acceptance_check.sh        # 37 passed, 0 failed
-bash scripts/app_release_prepare.sh             # ✅ Release prepare complete
-flutter pub get                                 # ✅
-flutter test                                    # ✅ All tests passed
+# ✅ 通过
+docker compose -f infra/docker-compose.yml up -d
+curl http://localhost:8000/health  # {"status":"ok","postgres":"ok","qdrant":"ok","minio":"ok","redis":"ok"}
+bash scripts/network_preflight.sh  # 局域网 IP: 192.168.3.107
+bash scripts/app_e2e_check.sh      # 16/17 passed
 
-# ⚠️ 已知问题
-flutter analyze                                 # Flutter 3.44.0 analysis server crash (SDK bug)
-flutter build macos --release                   # 超时 (本机环境限制)
-
-# ❌ 未执行 (依赖缺失)
-docker compose up -d                            # Docker 未安装
-curl http://localhost:8000/health               # Core 未运行
-bash scripts/network_preflight.sh               # Core 未运行
-flutter run -d macos                            # Core 未运行，无法测试配对
-flutter build apk --debug                       # Android SDK 36 缺失
-flutter build ios --no-codesign                 # 待执行
+# 🔧 环境修复
+python3 -m pip install --break-system-packages fastapi uvicorn sqlalchemy alembic qdrant-client minio redis celery python-frontmatter greenlet
+alembic upgrade head
+uvicorn app.main:app --host 0.0.0.0 --port 8000 &
+celery -A app.workers.celery_app worker &
 ```
 
-## 发现问题
+## 真实结果
+
+```
+✅ Health: ok (postgres/qdrant/minio/redis all healthy)
+✅ Pairing Create + Verify
+✅ No auth → 401 (3 checks passed)
+✅ KB create + upload
+✅ Celery: document UPLOADED → PARSING → PARSED → CHUNKING → EMBEDDING → INDEXING → READY
+✅ Reindex: active_version 1 → 2
+✅ Revoke + revoked → 401 (3 checks passed)
+⚠️ Chat citations: model-gateway not running (no Ollama)
+```
+
+## 发现的问题
 
 | 编号 | 严重程度 | 问题 | 状态 |
 |------|---------|------|------|
-| 1 | P1 | Docker 未安装 — Core 无法启动 | 待修复 |
-| 2 | P2 | Flutter 3.44.0 analyze crash (analysis server) | D2D 跟踪 |
-| 3 | P2 | Android SDK 需要 36 (Flutter 3.44 要求) | 待升级 |
+| 1 | P2 | Model gateway / Ollama 未运行 → Chat 无引用 | 需 `ollama serve` |
+| 2 | P2 | Flutter 3.44.0 analyze crash | SDK 已知 bug |
+| 3 | P2 | Android SDK 34 → 需 36 | APK 未构建 |
+| 4 | P3 | 无 Android 真机连接 | 移动端未测 |
+| 5 | P3 | Flutter build macOS 超时 (非GUI环境) | 需桌面会话 |
 
 ## 已修复问题
 
-无 (本阶段无可测试场景，无 P0/P1 阻塞)
+| 编号 | 严重程度 | 问题 | 修复 |
+|------|---------|------|------|
+| 1 | P1 | Docker 未安装 | `brew install --cask docker` → Docker 29.5.2 |
+| 2 | P1 | Backend 依赖缺失 | `pip install` greenlet/python-frontmatter/aiofiles |
+| 3 | P1 | Celery worker 未启动 | `celery -A app.workers.celery_app worker` |
 
 ## 未修复风险
 
-| 风险 | 影响 | 缓解 |
-|------|------|------|
-| Docker 未安装 | Core 完全不可用 | `brew install --cask docker` |
-| 无 Android 真机 | 移动端无法实测 | 连接 Android 设备 + `adb` |
-| Android SDK 版本 | APK 无法构建 | `sdkmanager "platforms;android-36"` |
-
-## 下一阶段建议
-
-1. **安装 Docker Desktop** — Core 服务前置依赖
-2. **升级 Android SDK** — `sdkmanager "platforms;android-36" "build-tools;36.0.0"`
-3. **真机连接** — macOS 运行 `flutter run -d macos` + Android 真机 `adb install`
-4. **完成 Pairing → Chat → revoke 闭环**
-5. **iOS no-codesign 构建验证**
+| 风险 | 影响 |
+|------|------|
+| 无模型网关 | Chat 无 LLM 回答和引用 |
+| 无 Android 真机 | 移动端未实测 |

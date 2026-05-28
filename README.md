@@ -476,7 +476,14 @@ bash scripts/phase2d_acceptance_check.sh
 ## Phase 2E — 真实设备实测
 
 ### 状态
-⚠️ 待 Docker 安装 + Android 真机连接后执行。
+⚠️ Docker 未安装 (非交互环境)。需手动：
+
+```bash
+brew install --cask docker
+open -a Docker
+docker compose up -d
+flutter run -d macos
+```
 
 ### 测试报告
 [docs/PHASE_2E_TEST_REPORT.md](docs/PHASE_2E_TEST_REPORT.md)
@@ -484,18 +491,23 @@ bash scripts/phase2d_acceptance_check.sh
 ### 环境报告
 ```bash
 bash scripts/phase2e_device_test_report.sh
-# 输出到 tmp/phase2e_env_report.txt
 ```
-
-### 真机 Checklist
-- [macOS](release/checklists/MACOS_TEST.md)
-- [Android](release/checklists/ANDROID_TEST.md)
 
 ### 已验证通过
 - ✅ `phase2d_acceptance_check.sh`: 37 passed
 - ✅ `app_release_prepare.sh`: passed
 - ✅ `flutter test`: All tests passed
 - ✅ DiagnosticsService 脱敏
+
+### 阻塞项
+- ❌ Docker 安装需 sudo 密码 (非交互环境不可用)
+- ❌ `flutter build macos` 超时 (需完整 GUI 会话)
+- ❌ Android 真机未连接
+
+### 手动闭环步骤
+1. `brew install --cask docker && open -a Docker`
+2. `docker compose up -d && curl localhost:8000/health`
+3. `flutter run -d macos` → Pairing → KB → Chat → revoke → 诊断脱敏
 
 ### 待完成
 - ❌ `brew install --cask docker` — Core 前置依赖
