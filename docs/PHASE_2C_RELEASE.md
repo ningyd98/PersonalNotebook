@@ -5,13 +5,17 @@
 
 ## 支持平台矩阵
 
-| 平台 | run | build | pairing | chat | runtime manager | 状态 |
-|------|-----|-------|---------|------|-----------------|------|
-| macOS 桌面 | ✅ | ✅ (macOS runner) | ✅ | ✅ | ✅ (Docker 管理) | **已就绪** |
-| Windows 桌面 | ✅ | ✅ (Windows runner) | ✅ | ✅ | ✅ (Docker 管理) | **已就绪** |
-| Linux 桌面 | ✅ | ✅ (optional) | ✅ | ✅ | ✅ (Docker 管理) | 可选 |
-| Android 移动 | ✅ | ✅ APK+AAB | ✅ (扫码配对) | ✅ | ❌ (隐藏入口) | **构建就绪** |
-| iOS 移动 | ✅ | ✅ (需 Xcode) | ✅ (扫码配对) | ✅ | ❌ (隐藏入口) | **构建就绪** |
+| 平台 | 代码 | 构建脚本 | 真机实测 | 备注 |
+|------|------|---------|---------|------|
+| macOS 桌面 | ✅ | ✅ `flutter build macos` | ⚠️ 待验证 | 需 Flutter SDK + Xcode CLT |
+| Windows 桌面 | ✅ | ✅ `flutter build windows` | ⚠️ 待验证 | 需 VS 2022 + Flutter |
+| Android | ✅ | ✅ `flutter build apk` | ⚠️ 待验证 | 需 Android SDK; 签名配置见下文 |
+| iOS | ✅ | ✅ `flutter build ios --no-codesign` | ⚠️ 待验证 | 需 Xcode; 真机需证书 |
+
+**状态说明:**
+- ✅ = 代码和脚本就绪，在开发机上通过 build/test
+- ⚠️ = 未在真实设备实测，需在对应构建环境验证
+- ❌ = 不支持
 
 ## 构建命令
 
@@ -32,71 +36,50 @@ flutter build ios --no-codesign # 开发调试
 flutter build ipa --release     # 发布 (需 Xcode + 证书)
 ```
 
+## 构建检查脚本
+
+| 脚本 | 模式 | 说明 |
+|------|------|------|
+| `scripts/app_build_check.sh` | **宽松** | 跳过不可用平台 (Flutter 未安装不退出) |
+| `scripts/app_build_verify.sh` | **严格** | Flutter 未安装退出 1; 平台构建失败退出 1 |
+
 ## 签名说明
 
 ### Android Release 签名
 1. 创建 keystore: `keytool -genkey -v -keystore upload-keystore.jks -alias upload -keyalg RSA -keysize 2048 -validity 10000`
-2. 创建 `app/personal_notebook_app/android/key.properties`:
-   ```
-   storePassword=xxx
-   keyPassword=xxx
-   keyAlias=upload
-   storeFile=../upload-keystore.jks
-   ```
+2. 创建 `app/personal_notebook_app/android/key.properties`
 3. 不提交 `upload-keystore.jks`、`key.properties` 到 git
 
 ### iOS 签名
 - 需要 Apple Developer Program 会员
-- Xcode: Signing & Capabilities → 选择 Team
 - 或使用 `--no-codesign` 构建开发版本
 
 ## 各平台限制
 
-### macOS
-- 需要 Xcode Command Line Tools + Flutter macOS 支持
-- 首次构建需 `flutter config --enable-macos-desktop`
-
-### Windows
-- 需要 Visual Studio 2022 with "Desktop development with C++"
-- 需要 Docker Desktop for Windows
-- `flutter config --enable-windows-desktop`
-
 ### Android
-- 需要 Android SDK + Android Studio
-- 本机局域网访问 Core: 使用 `http://192.168.x.x:8000` 而非 `localhost`
-- Android 9+ 需要 `android:usesCleartextTraffic="true"` 用于 HTTP 访问
+- 本机局域网连接 Core: 使用 `http://192.168.x.x:8000` 而非 `localhost`
+- Android 9+ 需 `android:usesCleartextTraffic="true"`
 
 ### iOS
-- 需要 Xcode + Apple Developer 账号
-- 本地网络权限: 需在 Info.plist 中声明 `NSLocalNetworkUsageDescription`
+- 本地网络权限: `NSLocalNetworkUsageDescription`
 - 相机权限: `NSCameraUsageDescription`
-- iOS 14+ 局域网发现需要 `NSBonjourServices`
 
-## 真实设备联调 Checklist
+## 真机验证 Checklist
 
-- [ ] `flutter pub get` 成功
-- [ ] `flutter analyze` 通过
-- [ ] `flutter test` 通过
-- [ ] 桌面端 App 启动
-- [ ] Pairing: 输入 Core URL + Token
-- [ ] 调用 `/health` 获得响应
-- [ ] 配对 verify 成功
-- [ ] Dashboard 显示 KB 列表
+- [ ] `flutter pub get && flutter analyze && flutter test` 通过
+- [ ] macOS App 启动 → 显示 PairingScreen
+- [ ] 输入 Core URL → 连接成功 → 进入 Dashboard
+- [ ] Dashboard 显示 KB 数量、coreUrl、tenantId、deviceId
 - [ ] KB 创建成功
-- [ ] 文档上传成功
-- [ ] 文档进入 READY 状态
-- [ ] Chat 返回带引用的回答
-- [ ] 撤消 token 后 App 提示 401
-- [ ] 重新配对成功
-- [ ] Android APK 安装成功
+- [ ] 文档上传成功 → 状态流转到 READY
+- [ ] Chat 返回回答 + citations
+- [ ] 撤销 token → App 检测 401 → 重新配对成功
+- [ ] Android APK 安装 → 扫码配对 → 聊天闭环
 - [ ] iOS 构建成功 (no-codesign)
 
 ## 发布前 Checklist
 
 - [ ] `bash scripts/app_release_prepare.sh` 通过
-- [ ] `bash scripts/app_build_check.sh` 通过
-- [ ] `bash scripts/app_device_smoke_test.sh` 通过
-- [ ] 版本号一致 (Flutter / Backend)
+- [ ] `bash scripts/app_build_verify.sh` 通过
 - [ ] 无密钥/证书/token 提交
 - [ ] 无构建产物提交
-- [ ] README 更新

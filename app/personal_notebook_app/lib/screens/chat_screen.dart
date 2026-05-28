@@ -63,6 +63,9 @@ class _ChatScreenState extends State<ChatScreen> {
         final coverage = resp['citation_coverage'];
         _citationCoverage = coverage is num ? coverage.toDouble() : null;
       });
+    } on ApiException catch (e) {
+      setState(() => _error = e.message);
+      if (e.statusCode == 401) Navigator.pushReplacementNamed(context, '/pairing');
     } catch (e) { setState(() => _error = e.toString()); }
     finally { setState(() => _loading = false); }
   }

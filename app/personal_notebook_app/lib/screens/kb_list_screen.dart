@@ -32,6 +32,11 @@ class _KbListScreenState extends State<KbListScreen> {
           _loading = false;
         });
       }
+    } on ApiException catch (e) {
+      if (mounted) {
+        setState(() { _loading = false; _error = e.message; });
+        if (e.statusCode == 401) Navigator.pushReplacementNamed(context, '/pairing');
+      }
     } catch (e) {
       if (mounted) {
         setState(() {

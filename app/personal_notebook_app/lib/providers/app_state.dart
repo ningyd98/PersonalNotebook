@@ -8,21 +8,23 @@ class AppState extends ChangeNotifier {
   bool _paired = false;
   String _coreUrl = '';
   String _tenantId = 'default';
+  String? _deviceId;
   bool _coreRunning = false;
 
   bool get initialized => _initialized;
   bool get paired => _paired;
   String get coreUrl => _coreUrl;
   String get tenantId => _tenantId;
+  String? get deviceId => _deviceId;
   bool get coreRunning => _coreRunning;
 
   Future<void> init() async {
     final url = await _storage.read(key: 'core_url');
     final token = await _storage.read(key: 'auth_token');
     final tenantId = await _storage.read(key: 'tenant_id');
-    if (tenantId != null && tenantId.isNotEmpty) {
-      _tenantId = tenantId;
-    }
+    final deviceId = await _storage.read(key: 'device_id');
+    if (tenantId != null && tenantId.isNotEmpty) _tenantId = tenantId;
+    if (deviceId != null && deviceId.isNotEmpty) _deviceId = deviceId;
     if (url != null && url.isNotEmpty) {
       _coreUrl = url;
       apiClient.configure(baseUrl: url, token: token);
@@ -49,11 +51,19 @@ class AppState extends ChangeNotifier {
           _tenantId = tenantId;
           await _storage.write(key: 'tenant_id', value: tenantId);
         }
+        final deviceId = (resp['device_id'] ?? data?['device_id'])?.toString();
+        if (deviceId != null && deviceId.isNotEmpty) {
+          _deviceId = deviceId;
+          await _storage.write(key: 'device_id', value: deviceId);
+        }
         _coreUrl = url;
         _paired = true;
         notifyListeners();
         return true;
       }
+    } on ApiException catch (e) {
+      debugPrint('Pairing failed: $e');
+      rethrow; // let PairingScreen handle categorization
     } catch (e) {
       debugPrint('Pairing failed: $e');
     }
@@ -64,8 +74,10 @@ class AppState extends ChangeNotifier {
     await _storage.delete(key: 'core_url');
     await _storage.delete(key: 'auth_token');
     await _storage.delete(key: 'tenant_id');
+    await _storage.delete(key: 'device_id');
     apiClient.configure(baseUrl: _coreUrl, token: null);
     _paired = false;
+    _deviceId = null;
     notifyListeners();
   }
 
