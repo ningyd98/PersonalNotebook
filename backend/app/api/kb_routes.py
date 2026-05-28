@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.db.session import get_db
 from app.models.models import Document, DocumentChunk, KnowledgeBase
 from app.schemas.schemas import KBCreate, KBResponse, KBUpdate, PaginatedResponse
+from app.dependencies.auth import get_current_device
 
 router = APIRouter()
 

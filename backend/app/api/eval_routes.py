@@ -5,8 +5,24 @@ import uuid
 from fastapi import APIRouter
 
 from app.schemas.schemas import EvalCaseCreate, EvalDatasetCreate, EvalRunRequest
+from app.db.session import get_db
+from app.models.models import EvalDataset
+from sqlalchemy.ext.asyncio import AsyncSession
+from fastapi import Depends
 
 router = APIRouter()
+
+
+@router.get("/datasets")
+async def list_datasets(db: AsyncSession = Depends(get_db)):
+    """返回评测集列表"""
+    from sqlalchemy import select
+    result = await db.execute(select(EvalDataset).order_by(EvalDataset.created_at.desc()))
+    datasets = result.scalars().all()
+    return {"datasets": [{"id": str(d.id), "name": d.name, "description": d.description,
+                           "kb_id": str(d.kb_id) if d.kb_id else None,
+                           "created_at": d.created_at.isoformat() if d.created_at else None}
+                          for d in datasets]}
 
 
 @router.post("/datasets")

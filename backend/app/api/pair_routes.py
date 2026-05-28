@@ -6,7 +6,7 @@ import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -136,37 +136,38 @@ async def verify_pair_token(req: PairVerifyRequest, db: AsyncSession = Depends(g
 
 
 @router.get("/devices")
-async def list_devices(db: AsyncSession = Depends(get_db)):
-    """列出真实设备列表。不返回明文 token。"""
+async def list_devices(request: Request, db: AsyncSession = Depends(get_db)):
+    """列出设备列表 — 仅 localhost 可访问。不返回 token_hash_prefix。"""
+    host = request.client.host if request.client else ""
+    if host not in ("127.0.0.1", "localhost", "::1"):
+        raise HTTPException(status_code=403, detail="Device list only available from localhost")
     result = await db.execute(select(PairedDevice).order_by(PairedDevice.created_at.desc()))
-    devices = [_device_payload(d) for d in result.scalars().all()]
+    devices = [
+        {"device_id": str(d.id), "tenant_id": d.tenant_id, "device_name": d.device_name,
+         "created_at": d.created_at.isoformat() if d.created_at else None,
+         "expires_at": d.expires_at.isoformat() if d.expires_at else None,
+         "revoked_at": d.revoked_at.isoformat() if d.revoked_at else None,
+         "last_seen_at": d.last_seen_at.isoformat() if d.last_seen_at else None}
+        for d in result.scalars().all()
+    ]
     return {"success": True, "devices": devices, "data": {"devices": devices}}
 
 
 @router.delete("/devices/{device_id}")
-async def revoke_device(device_id: str, db: AsyncSession = Depends(get_db)):
-    """按 device_id、完整 token_hash 或 token_hash 前缀撤销设备。"""
+async def revoke_device(device_id: str, request: Request, db: AsyncSession = Depends(get_db)):
+    """按 device_id (UUID) 撤销设备。仅 localhost 可访问。"""
+    host = request.client.host if request.client else ""
+    if host not in ("127.0.0.1", "localhost", "::1"):
+        raise HTTPException(status_code=403, detail="Device revocation only available from localhost")
     now = _utcnow()
-    conditions = []
     try:
-        conditions.append(PairedDevice.id == uuid.UUID(device_id))
+        did = uuid.UUID(device_id)
     except ValueError:
-        pass
-
-    conditions.append(PairedDevice.token_hash == device_id)
-    if 8 <= len(device_id) <= 64:
-        conditions.append(PairedDevice.token_hash.startswith(device_id))
-
-    result = await db.execute(select(PairedDevice).where(or_(*conditions)))
+        raise HTTPException(status_code=400, detail="Invalid device_id UUID")
+    result = await db.execute(select(PairedDevice).where(PairedDevice.id == did))
     device = result.scalars().first()
     if not device:
         raise HTTPException(status_code=404, detail="Device not found")
-
     device.revoked_at = now
     await db.commit()
-    return {
-        "success": True,
-        "revoked": True,
-        "device_id": str(device.id),
-        "token_hash_prefix": device.token_hash[:16],
-    }
+    return {"success": True, "revoked": True, "device_id": str(device.id)}
