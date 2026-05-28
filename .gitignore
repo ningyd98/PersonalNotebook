@@ -25,3 +25,20 @@ android/key.properties
 app/personal_notebook_app/android/key.properties
 app/personal_notebook_app/android/*.jks
 app/personal_notebook_app/android/*.keystore
+
+# Release artifacts and signing secrets
+*.apk
+*.aab
+*.ipa
+*.app
+*.dmg
+*.exe
+*.msix
+*.jks
+*.keystore
+keystore
+key.properties
+android/key.properties
+app/personal_notebook_app/android/key.properties
+app/personal_notebook_app/android/*.jks
+app/personal_notebook_app/android/*.keystore

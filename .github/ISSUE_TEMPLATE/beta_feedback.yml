@@ -1,38 +1,61 @@
 name: Beta Feedback
-description: 内测体验反馈
-labels: [beta-feedback]
+description: 提交 Phase 2D 内测反馈
+title: "[Beta] "
+labels: ["beta-feedback"]
 body:
   - type: input
+    id: device
     attributes:
-      label: 设备
-      placeholder: 例: Samsung S24 / iPhone 15 / MacBook Pro M3
+      label: 测试设备
   - type: input
+    id: os_version
     attributes:
       label: 系统版本
-      placeholder: 例: Android 14 / iOS 17.5 / macOS 14.5
-  - type: dropdown
+  - type: input
+    id: app_version
     attributes:
-      label: 配对是否成功
-      options: ["是", "否 — 卡在配对"]
+      label: App 版本
+      placeholder: "0.2.0+2"
   - type: dropdown
+    id: core_deploy
     attributes:
-      label: 问答是否成功
-      options: ["是", "否 — 卡在聊天"]
+      label: Core 部署方式
+      options: ["Docker", "手动", "其他"]
   - type: dropdown
+    id: pairing_method
     attributes:
-      label: 文档上传是否成功
-      options: ["是", "否 — 卡在上传", "未测试"]
+      label: 配对方式
+      options: ["扫码", "手动输入"]
   - type: dropdown
+    id: pairing_done
     attributes:
-      label: 体验评分 (1-5)
+      label: 是否完成配对
+      options: ["是", "否"]
+  - type: dropdown
+    id: upload_done
+    attributes:
+      label: 是否完成文档上传
+      options: ["是", "否"]
+  - type: dropdown
+    id: chat_done
+    attributes:
+      label: 是否完成问答
+      options: ["是", "否"]
+  - type: dropdown
+    id: score
+    attributes:
+      label: 体验评分
       options: ["1", "2", "3", "4", "5"]
   - type: textarea
+    id: blockers
     attributes:
       label: 主要卡点
+  - type: textarea
+    id: suggestions
+    attributes:
+      label: 改进建议
   - type: dropdown
+    id: followup
     attributes:
       label: 是否愿意继续跟进
       options: ["是", "否"]
-  - type: textarea
-    attributes:
-      label: 建议

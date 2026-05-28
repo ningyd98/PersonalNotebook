@@ -1,36 +1,56 @@
 name: Bug Report
-description: 提交 PersonalNotebook 缺陷报告
-labels: [bug]
+description: 报告 PersonalNotebook App/Core 问题
+title: "[Bug] "
+labels: ["bug"]
 body:
   - type: dropdown
+    id: platform
     attributes:
       label: 平台
-      options: [macOS, Windows, Android, iOS, Backend API, 其他]
+      options: [macOS, Windows, Android, iOS, Backend, Other]
+    validations:
+      required: true
   - type: input
+    id: app_version
     attributes:
       label: App 版本
-      placeholder: 0.2.0+2
+      placeholder: "0.2.0+2"
   - type: input
+    id: core_version
     attributes:
       label: Core 版本
-      placeholder: 0.2.0
+      placeholder: "0.2.0"
   - type: textarea
+    id: steps
     attributes:
       label: 复现步骤
   - type: textarea
+    id: expected
     attributes:
       label: 期望行为
   - type: textarea
+    id: actual
     attributes:
       label: 实际行为
   - type: textarea
+    id: logs
     attributes:
       label: 日志/截图
+      description: 请勿粘贴 token、密钥、完整 deviceId 或文档内容
   - type: dropdown
+    id: severity
     attributes:
       label: 严重程度
-      options: [P0-阻塞, P1-主要功能失败, P2-可绕过, P3-体验问题]
+      options: ["P0 阻塞", "P1 主要功能失败", "P2 可绕过", "P3 体验问题"]
+    validations:
+      required: true
   - type: textarea
+    id: diagnostics
     attributes:
       label: 诊断信息
-      description: Settings → 复制诊断信息，粘贴在此
+      description: Settings → 反馈问题 → 复制诊断信息
+  - type: dropdown
+    id: followup
+    attributes:
+      label: 是否愿意继续跟进
+      options: ["是", "否"]
