@@ -11,12 +11,15 @@ class AppState extends ChangeNotifier {
   String? _deviceId;
   bool _coreRunning = false;
 
+  String _deepSeekApiKey = '';
+
   bool get initialized => _initialized;
   bool get paired => _paired;
   String get coreUrl => _coreUrl;
   String get tenantId => _tenantId;
   String? get deviceId => _deviceId;
   bool get coreRunning => _coreRunning;
+  String get deepSeekApiKey => _deepSeekApiKey;
 
   Future<void> init() async {
     final url = await _storage.read(key: 'core_url');
@@ -25,6 +28,8 @@ class AppState extends ChangeNotifier {
     final deviceId = await _storage.read(key: 'device_id');
     if (tenantId != null && tenantId.isNotEmpty) _tenantId = tenantId;
     if (deviceId != null && deviceId.isNotEmpty) _deviceId = deviceId;
+    final apiKey = await _storage.read(key: 'deepseek_api_key');
+    if (apiKey != null) _deepSeekApiKey = apiKey;
     if (url != null && url.isNotEmpty) {
       _coreUrl = url;
       apiClient.configure(baseUrl: url, token: token);
@@ -83,6 +88,16 @@ class AppState extends ChangeNotifier {
 
   void setCoreRunning(bool running) {
     _coreRunning = running;
+    notifyListeners();
+  }
+
+  Future<void> setDeepSeekApiKey(String key) async {
+    _deepSeekApiKey = key;
+    if (key.isNotEmpty) {
+      await _storage.write(key: 'deepseek_api_key', value: key);
+    } else {
+      await _storage.delete(key: 'deepseek_api_key');
+    }
     notifyListeners();
   }
 }

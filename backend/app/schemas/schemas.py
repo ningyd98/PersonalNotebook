@@ -218,12 +218,13 @@ class IngestJobResponse(BaseModel):
 class ChatRequest(BaseModel):
     kb_id: uuid.UUID
     question: str = Field(min_length=1, max_length=5000)
-    retrieval_mode: str = "auto"  # auto | vector_only | hybrid | table | media
+    retrieval_mode: str = "auto"
     top_k: int = Field(default=8, ge=1, le=40)
     use_rerank: bool = True
     strict_citation: bool = True
     conversation_id: Optional[uuid.UUID] = None
-    debug: bool = False  # 是否返回检索 trace
+    debug: bool = False
+    api_key: str = ""  # DeepSeek/OpenAI API key from Flutter client
 
 
 class Citation(BaseModel):

@@ -151,9 +151,8 @@ async def chat(req: ChatRequest, db: AsyncSession = Depends(get_db), current_dev
     # 4. LLM Generation
     # ================================================================
     gen_result = await generation_service.generate(
-        question=req.question,
-        evidence_pack=evidence_pack,
-        strict_citation=req.strict_citation,
+        question=req.question, evidence_pack=evidence_pack,
+        strict_citation=req.strict_citation, api_key=req.api_key,
     )
 
     latency_ms = (time.time() - start_time) * 1000
@@ -415,9 +414,8 @@ async def chat_debug(req: ChatRequest, db: AsyncSession = Depends(get_db), curre
     )
 
     gen_result = await generation_service.generate(
-        question=req.question,
-        evidence_pack=[e.to_dict() for e in evidence_pack.evidences],
-        strict_citation=req.strict_citation,
+        question=req.question, evidence_pack=[e.to_dict() for e in evidence_pack.evidences],
+        strict_citation=req.strict_citation, api_key=req.api_key,
     )
     answer = gen_result.get("answer", "")
     latency_ms = (time.time() - start_time) * 1000

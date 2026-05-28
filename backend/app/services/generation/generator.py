@@ -33,35 +33,24 @@ class GenerationService:
         self.gateway_url = settings.MODEL_GATEWAY_URL.rstrip("/")
 
     async def generate(
-        self,
-        question: str,
-        evidence_pack: list[dict],
+        self, question: str, evidence_pack: list[dict],
         conversation_history: Optional[list[dict]] = None,
-        strict_citation: bool = True,
+        strict_citation: bool = True, api_key: str = "",
     ) -> dict:
-        """
-        基于 Evidence Pack 生成回答。
-        返回 {"answer": str, "citations": list[dict], "model": str, "latency_ms": float}
-        """
         start_time = time.time()
-
-        # 构造用户 prompt
         user_prompt = self._build_prompt(question, evidence_pack, strict_citation)
-
         messages = [{"role": "system", "content": RAG_SYSTEM_PROMPT}]
         if conversation_history:
-            messages.extend(conversation_history[-6:])  # 最近 3 轮
+            messages.extend(conversation_history[-6:])
         messages.append({"role": "user", "content": user_prompt})
-
         try:
             async with httpx.AsyncClient(timeout=120.0) as client:
                 resp = await client.post(
                     f"{self.gateway_url}/model/chat",
                     json={
-                        "model": self.model,
-                        "messages": messages,
-                        "temperature": 0.2,
-                        "max_tokens": 2048,
+                        "model": self.model, "messages": messages,
+                        "temperature": 0.2, "max_tokens": 2048,
+                        "api_key": api_key,
                     },
                 )
                 resp.raise_for_status()

@@ -19,27 +19,33 @@ class ChatMessage(BaseModel):
 
 
 class ChatRequest(BaseModel):
-    model: str = "qwen3:8b"
+    model: str = "deepseek-chat"
     messages: list[ChatMessage]
     temperature: float = Field(default=0.2, ge=0.0, le=2.0)
     max_tokens: int = Field(default=2048, ge=1, le=8192)
+    api_key: str = ""
 
 
 class EmbedRequest(BaseModel):
-    model: str = "bge-m3"
+    model: str = "text-embedding-3-small"
     texts: list[str]
+    api_key: str = ""
 
 
 class RerankRequest(BaseModel):
-    model: str = "qwen3-reranker-0.6b"
+    model: str = "deepseek-chat"
     query: str
     documents: list[str]
+    api_key: str = ""
 
 
-# ============================================================
-# Provider 注册
-# ============================================================
 _providers: dict[str, object] = {}
+_api_key: str = ""  # runtime override from requests
+
+
+def set_runtime_api_key(key: str):
+    global _api_key
+    _api_key = key
 
 
 def register_provider(name: str, provider):
@@ -74,8 +80,8 @@ def _find_provider_for_model(model: str):
     if preferred and preferred in _providers:
         return _providers[preferred]
 
-    # OpenAI 模型 → openai_compatible
-    if any(model.startswith(p) for p in ("gpt-", "o1", "o3", "text-embedding")):
+    # DeepSeek / OpenAI models → openai_compatible
+    if any(model.startswith(p) for p in ("gpt-", "o1", "o3", "text-embedding", "deepseek")):
         return _providers.get("openai_compatible")
 
     # 按优先级: vllm > openai_compatible > ollama
@@ -91,40 +97,37 @@ def _find_provider_for_model(model: str):
 # ============================================================
 @app.post("/model/chat")
 async def chat(request: ChatRequest):
+    if request.api_key:
+        set_runtime_api_key(request.api_key)
     provider = _find_provider_for_model(request.model)
     if provider is None:
         raise HTTPException(status_code=503, detail="No model provider available")
-
     result = await provider.chat(
-        model=request.model,
-        messages=[m.model_dump() for m in request.messages],
-        temperature=request.temperature,
-        max_tokens=request.max_tokens,
+        model=request.model, messages=[m.model_dump() for m in request.messages],
+        temperature=request.temperature, max_tokens=request.max_tokens,
     )
     return result
 
 
 @app.post("/model/embed")
 async def embed(request: EmbedRequest):
+    if request.api_key:
+        set_runtime_api_key(request.api_key)
     provider = _find_provider_for_model(request.model)
     if provider is None:
         raise HTTPException(status_code=503, detail="No model provider available")
-
     result = await provider.embed(model=request.model, texts=request.texts)
     return result
 
 
 @app.post("/model/rerank")
 async def rerank(request: RerankRequest):
+    if request.api_key:
+        set_runtime_api_key(request.api_key)
     provider = _find_provider_for_model(request.model)
     if provider is None:
         raise HTTPException(status_code=503, detail="No model provider available")
-
-    result = await provider.rerank(
-        model=request.model,
-        query=request.query,
-        documents=request.documents,
-    )
+    result = await provider.rerank(model=request.model, query=request.query, documents=request.documents)
     return result
 
 

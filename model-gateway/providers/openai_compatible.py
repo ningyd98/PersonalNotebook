@@ -22,8 +22,14 @@ class OpenAICompatibleProvider:
 
     @property
     def _headers(self) -> dict:
+        # Runtime API key from gateway overrides env
+        key = OPENAI_API_KEY
+        try:
+            from main import _api_key
+            if _api_key: key = _api_key
+        except ImportError: pass
         return {
-            "Authorization": f"Bearer {self.api_key}",
+            "Authorization": f"Bearer {key}",
             "Content-Type": "application/json",
         }
 
