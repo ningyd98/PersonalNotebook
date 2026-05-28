@@ -356,6 +356,85 @@ await rm.composePs();                // docker compose ps
 await rm.composeLogs();              // docker compose logs --tail=200
 ```
 
+## Phase 2C — 设备联调与打包
+
+### 版本对应
+
+| 组件 | 版本 |
+|------|------|
+| Flutter App | 0.2.0+2 |
+| Backend API | 0.2.0 |
+
+### 桌面端运行
+
+```bash
+# macOS / Windows / Linux
+cd app/personal_notebook_app
+flutter run -d macos     # macOS
+flutter run -d windows   # Windows
+flutter run -d linux     # Linux (optional)
+```
+
+### Android 安装
+
+```bash
+cd app/personal_notebook_app
+flutter build apk --debug
+adb install build/app/outputs/flutter-apk/app-debug.apk
+```
+
+### iOS 构建
+
+```bash
+cd app/personal_notebook_app
+flutter build ios --no-codesign   # 开发调试 (需 Xcode)
+# 发布: flutter build ipa --release (需证书)
+```
+
+### Pairing 使用流程
+
+1. 桌面端启动 Core: `docker compose up -d`
+2. 桌面端 `POST /auth/pair/create` → 获取 token
+3. 桌面端生成二维码 `{type, core_base_url, token, tenant_id, expires_at}`
+4. 移动端扫码 OR 手动输入 URL + Token
+5. 移动端 `POST /auth/pair/verify` 验证
+6. 成功后进入 Dashboard，所有请求自动带 Bearer token
+
+### Token 撤销后重新配对
+
+1. App 收到 401 → 自动跳转 PairingScreen
+2. Settings → 断开连接 → 清除本地 secure storage
+3. 桌面端重新 `POST /auth/pair/create`
+4. 重新扫码配对
+
+### Runtime Manager 支持
+
+| 平台 | 支持 |
+|------|------|
+| macOS / Windows / Linux | ✅ `docker compose up/down/logs/ps` |
+| Android / iOS | ❌ 移动端隐藏 Runtime Manager 入口 |
+
+### 常见问题
+
+见 [docs/APP_TROUBLESHOOTING.md](docs/APP_TROUBLESHOOTING.md)
+
+### Phase 2C 验收
+
+```bash
+# Backend
+bash scripts/ci_check.sh
+pytest backend/tests/test_pairing.py -q
+
+# App
+cd app/personal_notebook_app && flutter pub get && flutter analyze && flutter test
+
+# Build (macOS)
+cd app/personal_notebook_app && flutter build macos --release
+
+# Device smoke test
+bash scripts/app_device_smoke_test.sh
+```
+
 ## 许可证
 
 MIT

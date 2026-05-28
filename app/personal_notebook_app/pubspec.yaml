@@ -1,7 +1,7 @@
 name: personal_notebook_app
 description: PersonalNotebook - 个人知识库全平台 App
 publish_to: 'none'
-version: 0.2.0+1
+version: 0.2.0+2
 
 environment:
   sdk: '>=3.2.0 <4.0.0'
