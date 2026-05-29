@@ -61,7 +61,7 @@ class _ChatScreenState extends State<ChatScreen> {
       setState(() {
         _answer = resp['answer']?.toString() ?? '';
         _citations = (resp['citations'] as List<dynamic>?) ?? [];
-        _shouldRefuse = resp['should_refuse'] as bool?;
+        _shouldRefuse = (resp['should_refuse'] as bool?) ?? (resp['refusal'] as bool?) ?? false;
         _refusalReason = resp['refusal_reason']?.toString();
         final coverage = resp['citation_coverage'];
         _citationCoverage = coverage is num ? coverage.toDouble() : null;
@@ -150,5 +150,49 @@ class _CitationCard extends StatelessWidget {
         ],
       ),
     );
+  }
+}
+class _CitationCard extends StatefulWidget {
+  final Map citation;
+  const _CitationCard({required this.citation});
+  @override State<_CitationCard> createState() => _CitationCardState();
+}
+
+class _CitationCardState extends State<_CitationCard> {
+  bool _loading = false; String? _fullContent, _error;
+
+  Future<void> _loadChunk() async {
+    final cid = widget.citation['chunk_id']?.toString();
+    if (cid == null || cid.isEmpty) return;
+    setState(() { _loading = true; _error = null; });
+    try {
+      final r = await apiClient.get('/api/chunks/$cid');
+      _fullContent = r['content']?.toString();
+    } on ApiException catch (e) { _error = e.message; }
+    catch (e) { _error = e.toString(); }
+    if (mounted) setState(() => _loading = false);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final c = widget.citation; final score = c['score']; final rscore = c['rerank_score'];
+    final loc = [if (c['section_path'] != null) c['section_path'], if (c['page_number'] != null) 'p.${c['page_number']}', if (c['chunk_index'] != null) 'chunk#${c['chunk_index']}'].join(' · ');
+    final doc = c['document_name']?.toString() ?? c['filename']?.toString() ?? '?';
+    final ev = c['evidence_text']?.toString() ?? c['content_preview']?.toString() ?? '';
+    return Card(child: ExpansionTile(
+      title: Text(doc, style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
+      subtitle: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        if (loc.isNotEmpty) Text(loc, style: const TextStyle(fontSize: 11)),
+        Text('score: ${score is num ? score.toStringAsFixed(2) : '-'}${rscore is num ? ' · rerank: ${rscore.toStringAsFixed(2)}' : ''} · chunk: ${c['chunk_id']?.toString()?.substring(0,8) ?? '-'}', style: const TextStyle(fontSize: 11, color: Colors.grey)),
+      ]),
+      childrenPadding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+      children: [
+        if (ev.isNotEmpty) Container(padding: const EdgeInsets.all(8), decoration: BoxDecoration(color: Colors.grey.shade100, borderRadius: BorderRadius.circular(6)), child: SelectableText(ev, style: const TextStyle(fontSize: 12))),
+        const SizedBox(height: 8),
+        if (_fullContent == null && !_loading) TextButton.icon(onPressed: _loadChunk, icon: const Icon(Icons.open_in_full, size: 14), label: const Text('展开完整原文', style: TextStyle(fontSize: 11))),
+        if (_loading) const SizedBox(height: 16, width: 16, child: CircularProgressIndicator(strokeWidth: 2)),
+        if (_error != null) Text(_error!, style: const TextStyle(fontSize: 11, color: Colors.red)),
+        if (_fullContent != null) Container(padding: const EdgeInsets.all(8), decoration: BoxDecoration(color: Colors.blue.shade50, borderRadius: BorderRadius.circular(6)), child: SelectableText(_fullContent!, style: const TextStyle(fontSize: 12))),
+      ]));
   }
 }

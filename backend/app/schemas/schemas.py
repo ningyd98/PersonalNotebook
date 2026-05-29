@@ -228,10 +228,13 @@ class ChatRequest(BaseModel):
 
 
 class Citation(BaseModel):
+    citation_id: str = ""
     evidence_id: str
     source_type: str
     document_id: uuid.UUID
+    document_name: str = ""
     chunk_id: Optional[str] = None
+    chunk_index: Optional[int] = None
     version_id: Optional[int] = None
     filename: str
     page_number: Optional[int] = None
@@ -242,7 +245,9 @@ class Citation(BaseModel):
     end_time: Optional[float] = None
     section_path: Optional[str] = None
     score: float
+    rerank_score: Optional[float] = None
     content_preview: str
+    evidence_text: str = ""
     asset_preview: Optional[str] = None
 
 
@@ -260,8 +265,11 @@ class ChatResponse(BaseModel):
     answer: str
     citations: list[Citation] = []
     trace: Optional[RetrievalTrace] = None
-    should_refuse: bool = False
+    confidence: float = 0.0
+    refusal: bool = False
     refusal_reason: Optional[str] = None
+    suggested_actions: list[str] = []
+    should_refuse: bool = False
     citation_coverage: float = 0.0
     conversation_id: uuid.UUID
     message_id: uuid.UUID

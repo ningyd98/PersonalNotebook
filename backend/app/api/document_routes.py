@@ -623,3 +623,40 @@ async def check_consistency(kb_id: uuid.UUID, dry_run: bool = True, db = Depends
 
 
 # ============================================================
+
+
+# ============================================================
+# Phase 3C: Chunk detail
+# ============================================================
+
+@router.get("/chunks/{chunk_id}")
+async def get_chunk(chunk_id: str, db: AsyncSession = Depends(get_db),
+                    current_device: dict = Depends(get_current_device)):
+    try:
+        from uuid import UUID
+        cid = UUID(chunk_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid chunk_id format")
+
+    chunk = (await db.execute(
+        select(DocumentChunk).where(DocumentChunk.id == cid)
+    )).scalar_one_or_none()
+    if not chunk:
+        raise HTTPException(status_code=404, detail="Chunk not found")
+
+    doc = await db.get(Document, chunk.document_id)
+    if doc and doc.is_deleted:
+        raise HTTPException(status_code=404, detail="Document has been deleted")
+
+    return {
+        "chunk_id": str(chunk.id),
+        "document_id": str(chunk.document_id),
+        "document_name": doc.original_filename if doc else "unknown",
+        "chunk_index": chunk.chunk_index if hasattr(chunk, 'chunk_index') else None,
+        "content": chunk.content[:5000] if chunk.content else "",
+        "page_number": chunk.page_number if hasattr(chunk, 'page_number') else None,
+        "section_path": chunk.section_path if hasattr(chunk, 'section_path') else None,
+        "metadata_json": chunk.metadata_json,
+        "source_type": chunk.source_type if hasattr(chunk, 'source_type') else "text",
+        "object_key": chunk.filename if hasattr(chunk, 'filename') else None,
+    }

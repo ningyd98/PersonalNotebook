@@ -165,33 +165,62 @@ async def chat(req: ChatRequest, db: AsyncSession = Depends(get_db), current_dev
         gen_result.get("citations", []), evidence_pack
     )
 
-    # Build Citation objects
+    # Build Citation objects with enriched info + validation
     citations = []
+    deleted_doc_ids = set()
+    try:
+        from sqlalchemy import select as sa_select
+        deleted_rows = (await db.execute(
+            sa_select(Document.id).where(Document.is_deleted == True)
+        )).scalars().all()
+        deleted_doc_ids = set(str(r) for r in deleted_rows)
+    except Exception:
+        pass
+
     for i, c in enumerate(verified_citations):
         doc_uuid = _parse_uuid(c.get("document_id"))
         if doc_uuid is None:
-            logger.warning("Dropping citation without valid document_id: {}", c.get("evidence_id"))
             continue
+        # Filter deleted documents
+        if str(doc_uuid) in deleted_doc_ids:
+            continue
+        # Filter verified citations only
+        if not c.get("verified", True):
+            continue
+
+        doc = (await db.execute(
+            sa_select(Document).where(Document.id == doc_uuid)
+        )).scalar_one_or_none()
+
         citations.append(
             Citation(
+                citation_id=f"cit_{i:03d}",
                 evidence_id=c.get("evidence_id", f"ev_{i:03d}"),
                 source_type=c.get("source_type", "text"),
                 document_id=doc_uuid,
+                document_name=doc.original_filename if doc else c.get("filename", ""),
                 chunk_id=c.get("chunk_id"),
+                chunk_index=c.get("chunk_index", c.get("index")),
                 version_id=c.get("version_id"),
                 filename=c.get("filename", ""),
                 page_number=c.get("page_number"),
-                slide_number=c.get("slide_number"),
-                sheet_name=c.get("sheet_name"),
-                cell_range=c.get("cell_range"),
-                start_time=c.get("start_time"),
-                end_time=c.get("end_time"),
                 section_path=c.get("section_path"),
                 score=c.get("score", 0.0),
-                content_preview=c.get("content_preview", c.get("content", "")[:200]),
-                asset_preview=c.get("asset_preview"),
+                rerank_score=c.get("rerank_score"),
+                content_preview=c.get("content_preview", (c.get("content", "") or "")[:200]),
+                evidence_text=c.get("content", "")[:500] if c.get("content") else "",
             )
         )
+
+    # Build refusal/confidence
+    refusal_result = refusal_engine.evaluate(evidence_pack, gen_result.get("answer", ""), citations)
+    confidence = 1.0 - refusal_result.get("refusal_score", 0.0)
+    refusal = refusal_result.get("should_refuse", len(evidence_pack) == 0)
+    refusal_reason = refusal_result.get("reason") if refusal else None
+    suggested_actions = (
+        ["上传更多相关文档到该知识库", "尝试换一种更具体的问法", "检查知识库是否已完成索引"]
+        if refusal else []
+    )
 
     # ================================================================
     # 6. Save assistant message
