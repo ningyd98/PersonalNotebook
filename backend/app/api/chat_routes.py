@@ -44,21 +44,47 @@ def _parse_uuid(value: object) -> uuid.UUID | None:
 
 
 
+def _extract_score(c) -> float:
+    """Extract score from dict, Pydantic model, or plain object. priority: rerank_score > score"""
+    if isinstance(c, dict):
+        return c.get("rerank_score") or c.get("score", 0.0)
+    if hasattr(c, "rerank_score") and c.rerank_score is not None:
+        return float(c.rerank_score)
+    if hasattr(c, "score") and c.score is not None:
+        return float(c.score)
+    return 0.0
+
+
 def _evaluate_refusal(evidence_pack, answer, citations) -> dict:
-    """Evaluate if the answer should be refused based on evidence quality."""
-    if not evidence_pack or len(evidence_pack) == 0:
-        return {"should_refuse": True, "refusal_score": 1.0, "reason": "no_evidence"}
-    if not citations or len(citations) == 0:
-        return {"should_refuse": True, "refusal_score": 0.9, "reason": "no_verified_citations"}
-    scores = [c.get("score", 0) for c in citations if isinstance(c, dict)]
-    if not scores:
-        return {"should_refuse": False, "refusal_score": 0.0, "reason": None}
-    best = max(scores)
-    if best < 0.3:
-        return {"should_refuse": True, "refusal_score": 0.7, "reason": "low_confidence_all_scores_below_0.3"}
+    """Evaluate refusal/confidence. Returns {should_refuse, confidence, reason}."""
+    # 1. empty answer — instant refusal
     if not answer or len(answer.strip()) < 5:
-        return {"should_refuse": True, "refusal_score": 0.8, "reason": "empty_answer"}
-    return {"should_refuse": False, "refusal_score": max(0.0, best - 0.3), "reason": None}
+        return {"should_refuse": True, "confidence": 0.0, "reason": "empty_answer"}
+
+    # 2. no evidence
+    if not evidence_pack or len(evidence_pack) == 0:
+        return {"should_refuse": True, "confidence": 0.0, "reason": "no_evidence"}
+
+    # 3. no verified citations
+    if not citations or len(citations) == 0:
+        return {"should_refuse": True, "confidence": 0.15, "reason": "no_verified_citations"}
+
+    # 4. score-based evaluation
+    scores = [_extract_score(c) for c in citations]
+    if not scores:
+        return {"should_refuse": True, "confidence": 0.15, "reason": "no_verified_citations"}
+
+    best = max(scores)
+
+    # low confidence
+    if best < 0.3:
+        return {"should_refuse": True, "confidence": max(0.0, best), "reason": "low_confidence_citations"}
+
+    # normal — confidence scales with best score, clamped to [0.6, 1.0]
+    confidence = max(0.6, min(1.0, best))
+    return {"should_refuse": False, "confidence": round(confidence, 4), "reason": None}
+
+
 @router.post("/chat", response_model=ChatResponse)
 async def chat(req: ChatRequest, db: AsyncSession = Depends(get_db), current_device: dict = Depends(get_current_device)):
     start_time = time.time()
@@ -264,7 +290,7 @@ async def chat(req: ChatRequest, db: AsyncSession = Depends(get_db), current_dev
     await db.refresh(assistant_msg)
 
     refusal_result = _evaluate_refusal(evidence_pack, gen_result.get("answer",""), citations)
-    confidence = 1.0 - refusal_result.get("refusal_score", 0.0)
+    confidence = refusal_result.get("confidence", 0.0)
     refusal = refusal_result.get("should_refuse", False)
     refusal_reason = refusal_result.get("reason") if refusal else None
     suggested_actions = ["上传更多相关文档到该知识库", "尝试换一种更具体的问法", "检查知识库是否已完成索引"] if refusal else []
@@ -287,29 +313,26 @@ async def chat(req: ChatRequest, db: AsyncSession = Depends(get_db), current_dev
 
 
 def _verify_citations(generated_citations: list[dict], evidence_pack: list[dict]) -> list[dict]:
-    """
-    Citation Verification:
-    - Each citation must map to a valid evidence_id in the evidence_pack
-    - Remove fabricated citations
-    - If no valid citations but evidence exists, build citations from evidence
-    """
+    """Citation Verification + auto-construction from evidence."""
     if not generated_citations:
-        # Build citations from evidence if LLM didn't provide any
         return [
             {
-                "evidence_id": ev["evidence_id"],
+                "evidence_id": ev.get("evidence_id", f"ev_{i:03d}"),
                 "source_type": ev.get("source_type", "text"),
                 "document_id": ev.get("document_id", ""),
+                "document_name": ev.get("document_name", ev.get("filename", "")),
                 "chunk_id": ev.get("chunk_id", ""),
+                "chunk_index": ev.get("chunk_index", ev.get("index")),
                 "version_id": ev.get("version_id", 1),
                 "filename": ev.get("filename", ""),
                 "page_number": ev.get("page_number"),
-                "slide_number": ev.get("slide_number"),
                 "section_path": ev.get("section_path"),
                 "score": ev.get("score", 0.0),
-                "content_preview": ev.get("content", "")[:200],
+                "rerank_score": ev.get("rerank_score"),
+                "content_preview": (ev.get("content", "") or "")[:200],
+                "evidence_text": (ev.get("content", "") or "")[:500],
             }
-            for ev in evidence_pack[:5]
+            for i, ev in enumerate(evidence_pack[:8])
         ]
 
     # Build evidence_id set for validation
@@ -324,11 +347,15 @@ def _verify_citations(generated_citations: list[dict], evidence_pack: list[dict]
             verified.append({
                 **cit,
                 "document_id": ev.get("document_id", cit.get("document_id", "")),
+                "document_name": ev.get("document_name", ev.get("filename", cit.get("filename", ""))),
                 "chunk_id": ev.get("chunk_id", cit.get("chunk_id", "")),
+                "chunk_index": ev.get("chunk_index", ev.get("index")),
                 "version_id": ev.get("version_id", cit.get("version_id", 1)),
                 "filename": ev.get("filename", cit.get("filename", "")),
                 "score": ev.get("score", cit.get("score", 0.0)),
-                "content_preview": ev.get("content", cit.get("content_preview", ""))[:200],
+                "rerank_score": ev.get("rerank_score", cit.get("rerank_score")),
+                "content_preview": (ev.get("content", "") or "")[:200],
+                "evidence_text": (ev.get("content", "") or "")[:500],
             })
 
     return verified

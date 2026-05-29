@@ -124,6 +124,11 @@ class _CitationCard extends StatefulWidget {
 class _CitationCardState extends State<_CitationCard> {
   bool _loading = false; String? _fullContent, _error;
 
+  String _safeChunkId(String? cid) {
+    if (cid == null || cid.isEmpty) return '-';
+    return cid.length >= 8 ? cid.substring(0, 8) : cid;
+  }
+
   Future<void> _loadChunk() async {
     final cid = widget.citation['chunk_id']?.toString();
     if (cid == null || cid.isEmpty) return;
@@ -131,8 +136,10 @@ class _CitationCardState extends State<_CitationCard> {
     try {
       final r = await apiClient.get('/api/chunks/$cid');
       _fullContent = r['content']?.toString();
-    } on ApiException catch (e) { _error = e.message; }
-    catch (e) { _error = e.toString(); }
+    } on ApiException catch (e) {
+      _error = e.message;
+      if (e.statusCode == 401 && mounted) Navigator.pushReplacementNamed(context, '/pairing');
+    } catch (e) { _error = e.toString(); }
     if (mounted) setState(() => _loading = false);
   }
 
@@ -140,19 +147,22 @@ class _CitationCardState extends State<_CitationCard> {
   Widget build(BuildContext context) {
     final c = widget.citation; final score = c['score']; final rscore = c['rerank_score'];
     final loc = [if (c['section_path'] != null) c['section_path'], if (c['page_number'] != null) 'p.${c['page_number']}', if (c['chunk_index'] != null) 'chunk#${c['chunk_index']}'].join(' · ');
-    final doc = c['document_name']?.toString() ?? c['filename']?.toString() ?? '?';
+    final doc = c['document_name']?.toString() ?? c['filename']?.toString() ?? 'unknown';
     final ev = c['evidence_text']?.toString() ?? c['content_preview']?.toString() ?? '';
+    final chunkId = c['chunk_id']?.toString();
+    final hasChunk = chunkId != null && chunkId.isNotEmpty;
     return Card(child: ExpansionTile(
       title: Text(doc, style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
       subtitle: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
         if (loc.isNotEmpty) Text(loc, style: const TextStyle(fontSize: 11)),
-        Text('score: ${score is num ? score.toStringAsFixed(2) : '-'}${rscore is num ? ' · rerank: ${rscore.toStringAsFixed(2)}' : ''} · chunk: ${c['chunk_id']?.toString()?.substring(0,8) ?? '-'}', style: const TextStyle(fontSize: 11, color: Colors.grey)),
+        Text('score: ${score is num ? score.toStringAsFixed(2) : '-'}${rscore is num ? ' · rerank: ${rscore.toStringAsFixed(2)}' : ''} · chunk: ${_safeChunkId(chunkId)}', style: const TextStyle(fontSize: 11, color: Colors.grey)),
       ]),
       childrenPadding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
       children: [
         if (ev.isNotEmpty) Container(padding: const EdgeInsets.all(8), decoration: BoxDecoration(color: Colors.grey.shade100, borderRadius: BorderRadius.circular(6)), child: SelectableText(ev, style: const TextStyle(fontSize: 12))),
         const SizedBox(height: 8),
-        if (_fullContent == null && !_loading) TextButton.icon(onPressed: _loadChunk, icon: const Icon(Icons.open_in_full, size: 14), label: const Text('展开完整原文', style: TextStyle(fontSize: 11))),
+        if (!hasChunk && _fullContent == null && !_loading) const Text('无可展开 chunk', style: TextStyle(fontSize: 11, color: Colors.grey)),
+        if (hasChunk && _fullContent == null && !_loading) TextButton.icon(onPressed: _loadChunk, icon: const Icon(Icons.open_in_full, size: 14), label: const Text('展开完整原文', style: TextStyle(fontSize: 11))),
         if (_loading) const SizedBox(height: 16, width: 16, child: CircularProgressIndicator(strokeWidth: 2)),
         if (_error != null) Text(_error!, style: const TextStyle(fontSize: 11, color: Colors.red)),
         if (_fullContent != null) Container(padding: const EdgeInsets.all(8), decoration: BoxDecoration(color: Colors.blue.shade50, borderRadius: BorderRadius.circular(6)), child: SelectableText(_fullContent!, style: const TextStyle(fontSize: 12))),
