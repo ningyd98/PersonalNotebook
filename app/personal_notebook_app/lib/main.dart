@@ -14,6 +14,7 @@ import 'screens/debug_trace_screen.dart';
 import 'screens/eval_screen.dart';
 import 'screens/system_status_screen.dart';
 import 'screens/settings_screen.dart';
+import 'screens/diagnostics_screen.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
@@ -64,6 +65,7 @@ class PersonalNotebookApp extends StatelessWidget {
         '/eval': (_) => const EvalScreen(),
         '/system-status': (_) => const SystemStatusScreen(),
         '/settings': (_) => const SettingsScreen(),
+        '/diagnostics': (_) => const DiagnosticsScreen(),
       },
     );
   }
