@@ -45,9 +45,9 @@ def _parse_uuid(value: object) -> uuid.UUID | None:
 
 
 def _extract_score(c) -> float:
-    """Extract score from dict, Pydantic model, or plain object. priority: rerank_score > score"""
+    """Score from dict/Pydantic/object. Priority: rerank_score > score."""
     if isinstance(c, dict):
-        return c.get("rerank_score") or c.get("score", 0.0)
+        return c.get("rerank_score") if c.get("rerank_score") is not None else c.get("score", 0.0)
     if hasattr(c, "rerank_score") and c.rerank_score is not None:
         return float(c.rerank_score)
     if hasattr(c, "score") and c.score is not None:
@@ -239,6 +239,8 @@ async def chat(req: ChatRequest, db: AsyncSession = Depends(get_db), current_dev
             sa_select(Document).where(Document.id == doc_uuid)
         )).scalar_one_or_none()
 
+        evidence_t = c.get("evidence_text") or (c.get("content", "") or "")[:500]
+        content_p = c.get("content_preview") or (c.get("evidence_text", "") or "")[:200] or (c.get("content", "") or "")[:200]
         citations.append(
             Citation(
                 citation_id=f"cit_{len(citations):03d}",
@@ -254,8 +256,8 @@ async def chat(req: ChatRequest, db: AsyncSession = Depends(get_db), current_dev
                 section_path=c.get("section_path"),
                 score=c.get("score", 0.0),
                 rerank_score=c.get("rerank_score"),
-                content_preview=c.get("content_preview", (c.get("content", "") or "")[:200]),
-                evidence_text=c.get("content", "")[:500] if c.get("content") else "",
+                content_preview=content_p,
+                evidence_text=evidence_t,
             )
         )
 

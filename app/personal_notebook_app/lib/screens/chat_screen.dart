@@ -20,6 +20,8 @@ class _ChatScreenState extends State<ChatScreen> {
   bool? _shouldRefuse;
   String? _refusalReason;
   double? _citationCoverage;
+  double? _confidence;
+  List<dynamic> _suggestedActions = [];
 
   @override
   void initState() {
@@ -64,6 +66,9 @@ class _ChatScreenState extends State<ChatScreen> {
         _refusalReason = resp['refusal_reason']?.toString();
         final coverage = resp['citation_coverage'];
         _citationCoverage = coverage is num ? coverage.toDouble() : null;
+        final conf = resp['confidence'];
+        _confidence = conf is num ? conf.toDouble() : null;
+        _suggestedActions = (resp['suggested_actions'] as List<dynamic>?) ?? [];
       });
     } on ApiException catch (e) {
       setState(() => _error = e.message);
@@ -88,10 +93,17 @@ class _ChatScreenState extends State<ChatScreen> {
                 padding: const EdgeInsets.all(12),
                 margin: const EdgeInsets.only(bottom: 12),
                 decoration: BoxDecoration(color: Colors.orange.shade50, borderRadius: BorderRadius.circular(8), border: Border.all(color: Colors.orange.shade200)),
-                child: Text(
-                  '低置信拒答：${_refusalReason ?? '知识库中未找到足够的可靠证据'}',
-                  style: const TextStyle(color: Colors.deepOrange),
-                ),
+                child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                  Text('低置信拒答', style: TextStyle(fontWeight: FontWeight.bold, color: Colors.deepOrange.shade700)),
+                  if (_refusalReason != null) Text('原因: $_refusalReason', style: const TextStyle(color: Colors.deepOrange, fontSize: 13)),
+                  if (_confidence != null) Text('置信度: ${(_confidence! * 100).toStringAsFixed(0)}%', style: const TextStyle(fontSize: 12, color: Colors.grey)),
+                  if (_citationCoverage != null) Text('引用覆盖: ${(_citationCoverage! * 100).toStringAsFixed(0)}%', style: const TextStyle(fontSize: 12, color: Colors.grey)),
+                  if (_suggestedActions.isNotEmpty) ...[
+                    const SizedBox(height: 8),
+                    const Text('建议:', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600)),
+                    ..._suggestedActions.map((a) => Padding(padding: const EdgeInsets.only(top: 4), child: Text('· $a', style: const TextStyle(fontSize: 12, color: Colors.black87)))),
+                  ],
+                ]),
               ),
             if (_citationCoverage != null)
               Padding(
