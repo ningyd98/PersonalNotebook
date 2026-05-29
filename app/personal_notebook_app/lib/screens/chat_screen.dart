@@ -115,7 +115,7 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 }
 
-lass _CitationCard extends StatelessWidget {
+ass _CitationCard extends StatelessWidget {
   final Map citation;
 
   const _CitationCard({required this.citation});

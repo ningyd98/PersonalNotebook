@@ -127,13 +127,9 @@ async def chat(req: ChatRequest, db: AsyncSession = Depends(get_db), current_dev
         await db.commit()
         await db.refresh(assistant_msg)
 
-        assertion_result = _evaluate_refusal(evidence_pack, gen_result.get("answer",""), verified_citations)
-    confidence = 1.0 - assertion_result.get("refusal_score", 0.0)
-    refusal = assertion_result.get("should_refuse", len(evidence_pack) == 0)
-    refusal_reason = assertion_result.get("reason") if refusal else None
-    suggested_actions = ["上传更多相关文档到该知识库", "尝试换一种更具体的问法", "检查知识库是否已完成索引"] if refusal else []
+        suggested_actions = ["上传更多相关文档到该知识库", "尝试换一种更具体的问法", "检查知识库是否已完成索引"]
 
-    return ChatResponse(
+        return ChatResponse(
             answer=NO_EVIDENCE_ANSWER,
             citations=[],
             trace=RetrievalTrace(
@@ -148,8 +144,11 @@ async def chat(req: ChatRequest, db: AsyncSession = Depends(get_db), current_dev
             message_id=assistant_msg.id,
             model=settings.DEFAULT_LLM,
             latency_ms=latency_ms,
-            should_refuse=True,
+            confidence=0.0,
+            refusal=True,
             refusal_reason="no_evidence_or_low_confidence",
+            suggested_actions=suggested_actions,
+            should_refuse=True,
             citation_coverage=0.0,
         )
 
@@ -218,10 +217,7 @@ async def chat(req: ChatRequest, db: AsyncSession = Depends(get_db), current_dev
             )
         )
 
-    # Build refusal/confidence
-    refusal_result = _evaluate_refusal(evidence_pack, gen_result.get("answer", ""), citations)
-    confidence = 1.0 - refusal_result.get("refusal_score", 0.0)
-    # refusal evaluation moved to ChatResponse block below
+    # Build refusal/confidence (evaluated in return block below)
 
     # ================================================================
     # 6. Save assistant message
@@ -251,10 +247,10 @@ async def chat(req: ChatRequest, db: AsyncSession = Depends(get_db), current_dev
     await db.commit()
     await db.refresh(assistant_msg)
 
-    assertion_result = _evaluate_refusal(evidence_pack, gen_result.get("answer",""), verified_citations)
-    confidence = 1.0 - assertion_result.get("refusal_score", 0.0)
-    refusal = assertion_result.get("should_refuse", len(evidence_pack) == 0)
-    refusal_reason = assertion_result.get("reason") if refusal else None
+    refusal_result = _evaluate_refusal(evidence_pack, gen_result.get("answer",""), citations)
+    confidence = 1.0 - refusal_result.get("refusal_score", 0.0)
+    refusal = refusal_result.get("should_refuse", False)
+    refusal_reason = refusal_result.get("reason") if refusal else None
     suggested_actions = ["上传更多相关文档到该知识库", "尝试换一种更具体的问法", "检查知识库是否已完成索引"] if refusal else []
 
     return ChatResponse(
@@ -265,8 +261,11 @@ async def chat(req: ChatRequest, db: AsyncSession = Depends(get_db), current_dev
         message_id=assistant_msg.id,
         model=model_name,
         latency_ms=latency_ms,
-        should_refuse=False,
-        refusal_reason=None,
+        confidence=confidence,
+        refusal=refusal,
+        refusal_reason=refusal_reason,
+        suggested_actions=suggested_actions,
+        should_refuse=refusal,
         citation_coverage=(len(citations) / len(evidence_pack)) if evidence_pack else 0.0,
     )
 
