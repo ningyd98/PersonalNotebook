@@ -367,6 +367,14 @@ async def get_document(doc_id: uuid.UUID, db: AsyncSession = Depends(get_db), cu
     if not doc or doc.is_deleted:
         raise HTTPException(status_code=404, detail="Document not found")
 
+    # Get latest job for retry info
+    from sqlalchemy import desc, select as sqla_select
+    last_job = (await db.execute(
+        sqla_select(IngestJob).where(IngestJob.document_id == doc.id)
+        .order_by(desc(IngestJob.updated_at)).limit(1)
+    )).scalar_one_or_none()
+    from app.api.system_routes import _sanitize
+
     block_count = (await db.execute(
         select(func.count(DocumentBlock.id)).where(DocumentBlock.document_id == doc.id)
     )).scalar() or 0
@@ -393,10 +401,12 @@ async def get_document(doc_id: uuid.UUID, db: AsyncSession = Depends(get_db), cu
         "parse_status": doc.parse_status, "embed_status": doc.embed_status,
         "index_status": doc.index_status,
         "title": doc.title, "author": doc.author,
-        "metadata_json": doc.metadata_json,
         "block_count": block_count, "chunk_count": chunk_count, "asset_count": asset_count,
         "quality_report": quality_report,
         "created_at": doc.created_at.isoformat(), "updated_at": doc.updated_at.isoformat(),
+        "retry_count": last_job.retry_count if last_job else 0,
+        "last_retry_at": doc.last_retry_at.isoformat() if doc.last_retry_at else None,
+        "error_message": _sanitize(doc.metadata_json.get("error", "") if doc.metadata_json else ""),
     }
 
 
@@ -405,9 +415,51 @@ async def delete_document(doc_id: uuid.UUID, db: AsyncSession = Depends(get_db),
     doc = await db.get(Document, doc_id)
     if not doc or doc.is_deleted:
         raise HTTPException(status_code=404, detail="Document not found")
+    import datetime as dt
     doc.is_deleted = True
+    doc.deleted_at = dt.datetime.now(dt.timezone.utc)
+    doc.status = "DELETED"
+    for chunk in doc.chunks:
+        chunk.is_deleted = True
     await db.commit()
-    return {"message": "Document deleted (soft delete)"}
+    return {"document_id": str(doc.id), "deleted": True, "cleanup_status": "soft_deleted", "cleanup_job_id": None}
+
+
+@router.post("/documents/{doc_id}/retry")
+async def retry_document(doc_id: uuid.UUID, db: AsyncSession = Depends(get_db),
+                         current_device: dict = Depends(get_current_device), force: bool = False):
+    doc = await db.get(Document, doc_id)
+    if not doc:
+        raise HTTPException(status_code=404, detail="Document not found")
+    if doc.is_deleted:
+        raise HTTPException(status_code=400, detail="Cannot retry a deleted document")
+    retryable = doc.status in ("FAILED", "ERROR", "UPLOADED", "PARSING")
+    if not retryable and not force:
+        raise HTTPException(status_code=400, detail=f"Document status {doc.status} not retryable. Use force=true")
+    if doc.status == "READY" and not force:
+        raise HTTPException(status_code=400, detail="READY document cannot be retried. Use force=true")
+    from app.models.models import IngestJob
+    from sqlalchemy import desc, select
+    last_job = (await db.execute(
+        select(IngestJob).where(IngestJob.document_id == doc.id)
+        .order_by(desc(IngestJob.updated_at)).limit(1)
+    )).scalar_one_or_none()
+    retry_count = (last_job.retry_count if last_job else 0) + 1
+    if retry_count > 5 and not force:
+        raise HTTPException(status_code=400, detail="Retry limit (5) exceeded. Use force=true")
+    import datetime as _dt
+    new_job = IngestJob(kb_id=doc.kb_id, document_id=doc.id, job_type="ingest",
+                        status="PENDING", retry_count=retry_count,
+                        last_retry_at=_dt.datetime.now(_dt.timezone.utc))
+    db.add(new_job)
+    doc.status = "UPLOADED"
+    doc.parse_status = "pending"
+    doc.embed_status = "pending"
+    doc.index_status = "pending"
+    doc.last_retry_at = _dt.datetime.now(_dt.timezone.utc)
+    await db.commit()
+    await db.refresh(new_job)
+    return {"document_id": str(doc.id), "job_id": str(new_job.id), "status": "PENDING"}
 
 
 @router.post("/documents/{doc_id}/reparse")
@@ -590,3 +642,6 @@ async def check_consistency(kb_id: uuid.UUID, dry_run: bool = True, db = Depends
         return repair_index(str(kb_id), db_sync, dry_run=False)
     finally:
         db_sync.close()
+
+
+# ============================================================

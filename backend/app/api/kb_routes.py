@@ -1,15 +1,20 @@
 """知识库 API 路由 — 真实数据库查询"""
 
 import uuid
+from datetime import datetime
+from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import desc, func, select
+from pydantic import BaseModel
+from sqlalchemy import desc, func, select, case
+from sqlalchemy.sql import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.session import get_db
-from app.models.models import Document, DocumentChunk, KnowledgeBase
+from app.models.models import Document, DocumentChunk, IngestJob, KnowledgeBase
 from app.schemas.schemas import KBCreate, KBResponse, KBUpdate, PaginatedResponse
 from app.dependencies.auth import get_current_device
+from app.api.system_routes import _sanitize
 
 router = APIRouter()
 
@@ -172,4 +177,103 @@ def _kb_to_response(kb: KnowledgeBase) -> dict:
         "chunk_strategy": kb.chunk_strategy, "visibility": kb.visibility,
         "created_at": kb.created_at, "updated_at": kb.updated_at,
         "document_count": 0, "chunk_count": 0, "last_updated_at": None,
+    }
+
+
+# ============================================================
+# Phase 3B: Knowledge Base Management
+# ============================================================
+
+@router.get("/kbs/{kb_id}/stats")
+async def kb_stats(kb_id: uuid.UUID, db: AsyncSession = Depends(get_db),
+                   current_device: dict = Depends(get_current_device)):
+    kb = (await db.execute(select(KnowledgeBase).where(KnowledgeBase.id == kb_id))).scalar_one_or_none()
+    if not kb:
+        raise HTTPException(status_code=404, detail="KB not found")
+    stmt = select(
+        func.count(Document.id).label("total"),
+        func.count(case((Document.status == "READY", 1))).label("ready"),
+        func.count(case((Document.status == "UPLOADED", 1))).label("uploaded"),
+        func.count(case((Document.status == "PARSING", 1))).label("parsing"),
+        func.count(case((Document.status == "FAILED", 1))).label("failed"),
+    ).where(Document.kb_id == kb_id, Document.is_deleted == False)
+    stats = (await db.execute(stmt)).one()
+    active_docs = select(Document.id).where(Document.kb_id == kb_id, Document.is_deleted == False).scalar_subquery()
+    chunk_count = (await db.execute(
+        select(func.count(DocumentChunk.id)).where(DocumentChunk.document_id.in_(active_docs))
+    )).scalar() or 0
+    last_failed = (await db.execute(
+        select(IngestJob).where(IngestJob.kb_id == kb_id, IngestJob.status == "FAILED")
+        .order_by(desc(IngestJob.updated_at)).limit(1)
+    )).scalar_one_or_none()
+    return {
+        "kb_id": str(kb.id), "name": kb.name, "description": kb.description,
+        "documents": {"total": stats.total, "ready": stats.ready, "uploaded": stats.uploaded,
+                      "parsing": stats.parsing, "failed": stats.failed},
+        "index": {"active_version": 1, "total_chunks": chunk_count,
+                  "total_vectors": chunk_count, "last_indexed_at": None},
+        "last_error": _sanitize(last_failed.error_message[:200]) if last_failed and last_failed.error_message else None,
+    }
+
+
+@router.get("/kbs/{kb_id}/documents")
+async def kb_documents(kb_id: uuid.UUID, db: AsyncSession = Depends(get_db),
+                       current_device: dict = Depends(get_current_device),
+                       page: int = Query(1, ge=1), page_size: int = Query(20, ge=1, le=100),
+                       status: Optional[str] = None, search: Optional[str] = None):
+    kb = (await db.execute(select(KnowledgeBase).where(KnowledgeBase.id == kb_id))).scalar_one_or_none()
+    if not kb:
+        raise HTTPException(status_code=404, detail="KB not found")
+    q = select(Document).where(Document.kb_id == kb_id, Document.is_deleted == False)
+    if status:
+        q = q.where(Document.status == status)
+    if search:
+        q = q.where(Document.original_filename.ilike(f"%{search}%"))
+    q = q.order_by(desc(Document.updated_at))
+    total = (await db.execute(select(func.count()).select_from(q.subquery()))).scalar()
+    rows = (await db.execute(q.offset((page - 1) * page_size).limit(page_size))).scalars().all()
+    items = []
+    for doc in rows:
+        job = (await db.execute(select(IngestJob).where(IngestJob.document_id == doc.id)
+                                .order_by(desc(IngestJob.updated_at)).limit(1))).scalar_one_or_none()
+        items.append({
+            "document_id": str(doc.id), "kb_id": str(doc.kb_id),
+            "filename": doc.filename, "original_filename": doc.original_filename,
+            "file_type": doc.file_type, "mime_type": doc.mime_type, "file_size": doc.file_size,
+            "uploaded_at": doc.created_at.isoformat(), "updated_at": doc.updated_at.isoformat(),
+            "status": doc.status, "parse_status": doc.parse_status,
+            "embed_status": doc.embed_status, "index_status": doc.index_status,
+            "progress": job.progress if job else (1.0 if doc.status == "READY" else 0.0),
+            "chunk_count": len(doc.chunks) if doc.chunks else 0,
+            "vector_count": len(doc.chunks) if doc.chunks else 0,
+            "error_message": _sanitize(doc.metadata_json.get("error", "") if doc.metadata_json else "") or "",
+            "retry_count": job.retry_count if job else 0,
+            "last_retry_at": doc.last_retry_at.isoformat() if doc.last_retry_at else None,
+        })
+    return {"items": items, "total": total, "page": page, "page_size": page_size}
+
+
+@router.get("/kbs/{kb_id}/reindex/status")
+async def kb_reindex_status(kb_id: uuid.UUID, db: AsyncSession = Depends(get_db),
+                            current_device: dict = Depends(get_current_device)):
+    kb = (await db.execute(select(KnowledgeBase).where(KnowledgeBase.id == kb_id))).scalar_one_or_none()
+    if not kb:
+        raise HTTPException(status_code=404, detail="KB not found")
+    job = (await db.execute(
+        select(IngestJob).where(IngestJob.kb_id == kb_id, IngestJob.job_type == "reindex")
+        .order_by(desc(IngestJob.updated_at)).limit(1)
+    )).scalar_one_or_none()
+    total_docs = (await db.execute(
+        select(func.count(Document.id)).where(Document.kb_id == kb_id, Document.is_deleted == False)
+    )).scalar()
+    return {
+        "active_version": 1,
+        "target_version": 2 if job and job.status == "RUNNING" else 1,
+        "status": job.status if job else "idle",
+        "total_documents": total_docs,
+        "processed_documents": int(job.progress * total_docs) if job else 0,
+        "failed_documents": 0, "current_document": None,
+        "started_at": job.started_at.isoformat() if job and job.started_at else None,
+        "finished_at": job.finished_at.isoformat() if job and job.finished_at else None,
+        "error_message": _sanitize(job.error_message[:200]) if job and job.error_message else None,
     }

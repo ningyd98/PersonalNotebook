@@ -15,6 +15,7 @@ import 'screens/eval_screen.dart';
 import 'screens/system_status_screen.dart';
 import 'screens/settings_screen.dart';
 import 'screens/diagnostics_screen.dart';
+import 'screens/kb_detail_screen.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();

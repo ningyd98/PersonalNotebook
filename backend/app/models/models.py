@@ -120,6 +120,8 @@ class Document(Base, UUIDMixin, TimestampMixin, SoftDeleteMixin):
     title: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
     author: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     metadata_json: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    last_retry_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    deleted_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
 
     # 关系
     kb = relationship("KnowledgeBase", back_populates="documents")
@@ -392,6 +394,7 @@ class IngestJob(Base, UUIDMixin, TimestampMixin):
     started_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     finished_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     retry_count: Mapped[int] = mapped_column(Integer, default=0)
+    last_retry_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     idempotency_key: Mapped[Optional[str]] = mapped_column(String(128), nullable=True, index=True)
 
     kb = relationship("KnowledgeBase", back_populates="ingest_jobs")

@@ -1,171 +1,105 @@
 import 'package:flutter/material.dart';
-
 import '../api/client.dart';
-import 'chat_screen.dart';
-import 'debug_trace_screen.dart';
-import 'document_list_screen.dart';
-import 'document_upload_screen.dart';
 
 class KbDetailScreen extends StatefulWidget {
-  final String? kbId;
-
-  const KbDetailScreen({super.key, this.kbId});
-
-  @override
-  State<KbDetailScreen> createState() => _KbDetailScreenState();
+  final String kbId;
+  final String kbName;
+  const KbDetailScreen({super.key, required this.kbId, required this.kbName});
+  @override State<KbDetailScreen> createState() => _KbDetailScreenState();
 }
 
 class _KbDetailScreenState extends State<KbDetailScreen> {
-  Map<String, dynamic>? _kb;
-  bool _loading = false;
+  Map<String, dynamic>? _stats;
+  List<dynamic>? _docs;
+  bool _loading = true;
   String? _error;
 
-  String get _kbId => widget.kbId ?? '';
-
-  @override
-  void initState() {
-    super.initState();
-    if (_kbId.isNotEmpty) _load();
-  }
+  @override void initState() { super.initState(); _load(); }
 
   Future<void> _load() async {
-    setState(() {
-      _loading = true;
-      _error = null;
-    });
+    setState(() { _loading = true; _error = null; });
     try {
-      final r = await apiClient.get('/api/kbs/$_kbId');
-      if (mounted) {
-        setState(() {
-          _kb = r;
-          _loading = false;
-        });
-      }
-    } catch (e) {
-      if (mounted) {
-        setState(() {
-          _error = e.toString();
-          _loading = false;
-        });
-      }
-    }
+      _stats = await apiClient.get('/api/kbs/${widget.kbId}/stats');
+      final docsResp = await apiClient.get('/api/kbs/${widget.kbId}/documents');
+      _docs = docsResp['items'] as List<dynamic>?;
+    } on ApiException catch (e) { _error = e.message; } catch (e) { _error = e.toString(); }
+    if (mounted) setState(() => _loading = false);
   }
 
-  Future<void> _checkConsistency() async {
-    try {
-      final resp = await apiClient.get('/api/kbs/$_kbId/consistency?dry_run=true');
-      if (!mounted) return;
-      final ok = resp['report']?['is_consistent'];
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Consistency: ${ok ?? resp.toString()}')),
-      );
-    } catch (e) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Consistency 检查失败：$e')),
-      );
-    }
+  Future<void> _retry(String docId) async {
+    final ok = await showDialog<bool>(context: context, builder: (ctx) => AlertDialog(
+      title: const Text('重试确认'), content: const Text('将重新处理此文档。'),
+      actions: [TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('取消')), FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('重试'))],
+    ));
+    if (ok != true) return;
+    try { await apiClient.post('/api/documents/$docId/retry', body: {'force': true}); _load(); }
+    on ApiException catch (e) { if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('失败: ${e.message}'))); }
+  }
+
+  Future<void> _delete(String docId, String name) async {
+    final ok = await showDialog<bool>(context: context, builder: (ctx) => AlertDialog(
+      title: const Text('删除文档'), content: Text('确定要删除 "$name" 吗？删除后该文档不再参与问答。'),
+      actions: [TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('取消')), FilledButton(onPressed: () => Navigator.pop(ctx, true), style: FilledButton.styleFrom(backgroundColor: Colors.red), child: const Text('删除'))],
+    ));
+    if (ok != true) return;
+    try { await apiClient.delete('/api/documents/$docId'); _load(); }
+    on ApiException catch (e) { if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('失败: ${e.message}'))); }
   }
 
   @override
   Widget build(BuildContext context) {
-    if (_kbId.isEmpty) {
-      return const Scaffold(
-        body: Center(child: Text('缺少知识库 ID')),
-      );
-    }
-
     return Scaffold(
-      appBar: AppBar(
-        title: Text(_kb?['name']?.toString() ?? '知识库详情'),
-        actions: [IconButton(icon: const Icon(Icons.refresh), onPressed: _load)],
-      ),
-      body: _loading && _kb == null
-          ? const Center(child: CircularProgressIndicator())
-          : ListView(
-              padding: const EdgeInsets.all(16),
-              children: [
-                if (_error != null)
-                  Padding(
-                    padding: const EdgeInsets.only(bottom: 12),
-                    child: Text(_error!, style: const TextStyle(color: Colors.red)),
-                  ),
-                if (_kb != null) ...[
-                  Text(
-                    _kb!['name']?.toString() ?? '',
-                    style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w600),
-                  ),
-                  Text(
-                    '文档: ${_kb!['document_count'] ?? 0} · Chunks: ${_kb!['chunk_count'] ?? 0}',
-                    style: const TextStyle(color: Colors.grey),
-                  ),
-                  if ((_kb!['description']?.toString() ?? '').isNotEmpty)
-                    Padding(
-                      padding: const EdgeInsets.only(top: 8),
-                      child: Text(_kb!['description'].toString()),
-                    ),
-                  const Divider(height: 32),
-                ],
-                _NavCard(
-                  Icons.description,
-                  '文档列表',
-                  () => Navigator.push(
-                    context,
-                    MaterialPageRoute(builder: (_) => DocumentListScreen(kbId: _kbId)),
-                  ),
-                ),
-                _NavCard(
-                  Icons.upload_file,
-                  '上传文档',
-                  () => Navigator.push(
-                    context,
-                    MaterialPageRoute(builder: (_) => DocumentUploadScreen(kbId: _kbId)),
-                  ),
-                ),
-                _NavCard(
-                  Icons.chat,
-                  '问答',
-                  () => Navigator.push(
-                    context,
-                    MaterialPageRoute(builder: (_) => ChatScreen(kbId: _kbId)),
-                  ),
-                ),
-                _NavCard(
-                  Icons.bug_report,
-                  'Debug Trace',
-                  () => Navigator.push(
-                    context,
-                    MaterialPageRoute(builder: (_) => DebugTraceScreen(kbId: _kbId)),
-                  ),
-                ),
-                _NavCard(
-                  Icons.assessment,
-                  '评测',
-                  () => Navigator.pushNamed(context, '/eval', arguments: {'kb_id': _kbId}),
-                ),
-                _NavCard(Icons.check_circle, 'Consistency', _checkConsistency),
-              ],
-            ),
+      appBar: AppBar(title: Text(widget.kbName), actions: [IconButton(icon: const Icon(Icons.refresh), onPressed: _load)]),
+      body: _loading ? const Center(child: CircularProgressIndicator())
+        : _error != null ? Center(child: Text('加载失败: $_error', style: const TextStyle(color: Colors.red)))
+        : ListView(padding: const EdgeInsets.all(16), children: [
+          if (_stats != null) ...[
+            _sectionHeader('知识库统计'),
+            Card(child: Padding(padding: const EdgeInsets.all(12), child: Column(children: [
+              _statRow('文档总数', '${(_stats!['documents'] as Map)['total']}'),
+              _statRow('就绪', '${(_stats!['documents'] as Map)['ready']}', color: Colors.green),
+              _statRow('已上传', '${(_stats!['documents'] as Map)['uploaded']}', color: Colors.orange),
+              _statRow('解析中', '${(_stats!['documents'] as Map)['parsing']}'),
+              _statRow('失败', '${(_stats!['documents'] as Map)['failed']}', color: Colors.red),
+              const Divider(),
+              _statRow('Chunks', '${(_stats!['index'] as Map)['total_chunks']}'),
+              _statRow('Vectors', '${(_stats!['index'] as Map)['total_vectors']}'),
+              _statRow('Active Version', '${(_stats!['index'] as Map)['active_version']}'),
+              if (_stats!['last_error'] != null)
+                Padding(padding: const EdgeInsets.only(top: 8), child: Text('Last Error: ${_stats!['last_error']}', style: const TextStyle(color: Colors.red, fontSize: 11))),
+            ]))),
+            const SizedBox(height: 16),
+            _sectionHeader('文档列表 (${_docs?.length ?? 0})'),
+          ],
+          if (_docs != null) ..._docs!.map((d) => _docCard(d)),
+        ]),
     );
   }
-}
 
-class _NavCard extends StatelessWidget {
-  final IconData icon;
-  final String label;
-  final VoidCallback onTap;
+  Widget _sectionHeader(String t) => Padding(padding: const EdgeInsets.only(bottom: 8), child: Text(t, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold)));
+  Widget _statRow(String label, String value, {Color? color}) => Row(children: [
+    Expanded(child: Text(label, style: const TextStyle(fontSize: 13))),
+    Text(value, style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: color)),
+  ]);
 
-  const _NavCard(this.icon, this.label, this.onTap);
-
-  @override
-  Widget build(BuildContext context) {
-    return Card(
-      child: ListTile(
-        leading: Icon(icon),
-        title: Text(label),
-        trailing: const Icon(Icons.chevron_right),
-        onTap: onTap,
-      ),
-    );
+  Widget _docCard(Map<String, dynamic> d) {
+    final status = d['status']?.toString() ?? '?';
+    final isReady = status == 'READY';
+    final isFailed = status == 'FAILED';
+    return Card(child: ListTile(
+      leading: Icon(isReady ? Icons.check_circle : isFailed ? Icons.error : Icons.hourglass_empty,
+        color: isReady ? Colors.green : isFailed ? Colors.red : Colors.orange, size: 24),
+      title: Text(d['original_filename']?.toString() ?? '?', maxLines: 1, overflow: TextOverflow.ellipsis),
+      subtitle: Text('$status | chunks: ${d['chunk_count']} | vectors: ${d['vector_count']} | ${d['file_size']}B', style: const TextStyle(fontSize: 11)),
+      trailing: PopupMenuButton<String>(onSelected: (v) {
+        final id = d['document_id']?.toString() ?? '';
+        final name = d['original_filename']?.toString() ?? '';
+        if (v == 'retry') _retry(id);
+        if (v == 'delete') _delete(id, name);
+      }, itemBuilder: (_) => [
+        const PopupMenuItem(value: 'retry', child: ListTile(leading: Icon(Icons.refresh, size: 18), title: Text('重试', style: TextStyle(fontSize: 14)), dense: true)),
+        const PopupMenuItem(value: 'delete', child: ListTile(leading: Icon(Icons.delete, size: 18, color: Colors.red), title: Text('删除', style: TextStyle(fontSize: 14, color: Colors.red)), dense: true)),
+      ]),
+    ));
   }
 }
