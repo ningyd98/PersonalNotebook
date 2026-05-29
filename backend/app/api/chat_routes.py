@@ -43,6 +43,22 @@ def _parse_uuid(value: object) -> uuid.UUID | None:
         return None
 
 
+
+def _evaluate_refusal(evidence_pack, answer, citations) -> dict:
+    """Evaluate if the answer should be refused based on evidence quality."""
+    if not evidence_pack or len(evidence_pack) == 0:
+        return {"should_refuse": True, "refusal_score": 1.0, "reason": "no_evidence"}
+    if not citations or len(citations) == 0:
+        return {"should_refuse": True, "refusal_score": 0.9, "reason": "no_verified_citations"}
+    scores = [c.get("score", 0) for c in citations if isinstance(c, dict)]
+    if not scores:
+        return {"should_refuse": False, "refusal_score": 0.0, "reason": None}
+    best = max(scores)
+    if best < 0.3:
+        return {"should_refuse": True, "refusal_score": 0.7, "reason": "low_confidence_all_scores_below_0.3"}
+    if not answer or len(answer.strip()) < 5:
+        return {"should_refuse": True, "refusal_score": 0.8, "reason": "empty_answer"}
+    return {"should_refuse": False, "refusal_score": max(0.0, best - 0.3), "reason": None}
 @router.post("/chat", response_model=ChatResponse)
 async def chat(req: ChatRequest, db: AsyncSession = Depends(get_db), current_device: dict = Depends(get_current_device)):
     start_time = time.time()

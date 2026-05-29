@@ -115,42 +115,6 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 }
 
-ass _CitationCard extends StatelessWidget {
-  final Map citation;
-
-  const _CitationCard({required this.citation});
-
-  @override
-  Widget build(BuildContext context) {
-    final score = citation['score'];
-    final location = [
-      if (citation['section_path'] != null) citation['section_path'],
-      if (citation['page_number'] != null) 'page=${citation['page_number']}',
-      if (citation['slide_number'] != null) 'slide=${citation['slide_number']}',
-    ].join(' · ');
-    final preview = citation['content_preview']?.toString() ?? '';
-
-    return Card(
-      child: ExpansionTile(
-        title: Text(citation['filename']?.toString() ?? '', style: const TextStyle(fontSize: 13)),
-        subtitle: Text(
-          'doc=${citation['document_id'] ?? '-'}\n'
-          'chunk=${citation['chunk_id'] ?? '-'} · version=${citation['version_id'] ?? '-'} · '
-          'score=${score is num ? score.toStringAsFixed(2) : '-'}\n'
-          '${location.isEmpty ? '-' : location}',
-          style: const TextStyle(fontSize: 11),
-        ),
-        childrenPadding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
-        children: [
-          Align(
-            alignment: Alignment.centerLeft,
-            child: SelectableText(preview.isEmpty ? '无原文预览' : preview),
-          ),
-        ],
-      ),
-    );
-  }
-}
 class _CitationCard extends StatefulWidget {
   final Map citation;
   const _CitationCard({required this.citation});
