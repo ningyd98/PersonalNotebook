@@ -650,6 +650,8 @@ async def get_chunk(chunk_id: str, db: AsyncSession = Depends(get_db),
 
     return {
         "chunk_id": str(chunk.id),
+        "document_name": doc.original_filename if doc else "unknown",
+        "masked_source": _mask_storage_path(doc.storage_path) if doc and doc.storage_path else "",
         "document_id": str(chunk.document_id),
         "document_name": doc.original_filename if doc else "unknown",
         "chunk_index": chunk.chunk_index if hasattr(chunk, 'chunk_index') else None,
@@ -658,5 +660,5 @@ async def get_chunk(chunk_id: str, db: AsyncSession = Depends(get_db),
         "section_path": chunk.section_path if hasattr(chunk, 'section_path') else None,
         "metadata_json": chunk.metadata_json,
         "source_type": chunk.source_type if hasattr(chunk, 'source_type') else "text",
-        "object_key": chunk.filename if hasattr(chunk, 'filename') else None,
+        "object_key": _mask_storage_path(doc.storage_path) if doc and doc.storage_path else None,
     }

@@ -53,10 +53,9 @@ class _ChatScreenState extends State<ChatScreen> {
       _citationCoverage = null;
     });
     try {
-      final apiKey = context.read<AppState>().deepSeekApiKey;
       final resp = await apiClient.post(
         '/api/chat',
-        body: {'kb_id': kbId, 'question': q, 'top_k': 8, 'use_rerank': true, 'strict_citation': true, 'api_key': apiKey},
+        body: {'kb_id': kbId, 'question': q, 'top_k': 8, 'use_rerank': true, 'strict_citation': true},
       );
       setState(() {
         _answer = resp['answer']?.toString() ?? '';
@@ -116,7 +115,7 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 }
 
-class _CitationCard extends StatelessWidget {
+lass _CitationCard extends StatelessWidget {
   final Map citation;
 
   const _CitationCard({required this.citation});

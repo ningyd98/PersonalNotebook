@@ -224,7 +224,6 @@ class ChatRequest(BaseModel):
     strict_citation: bool = True
     conversation_id: Optional[uuid.UUID] = None
     debug: bool = False
-    api_key: str = ""  # DeepSeek/OpenAI API key from Flutter client
 
 
 class Citation(BaseModel):

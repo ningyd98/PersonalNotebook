@@ -11,7 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import get_settings
 from app.db.session import get_db
 from app.dependencies.auth import get_current_device
-from app.models.models import Conversation, Feedback, Message
+from app.models.models import Conversation, Feedback, Message, Document
 from app.schemas.schemas import (
     ChatRequest, ChatResponse, Citation, FeedbackRequest,
     FeedbackResponse, RetrievalTrace,
@@ -127,7 +127,13 @@ async def chat(req: ChatRequest, db: AsyncSession = Depends(get_db), current_dev
         await db.commit()
         await db.refresh(assistant_msg)
 
-        return ChatResponse(
+        assertion_result = _evaluate_refusal(evidence_pack, gen_result.get("answer",""), verified_citations)
+    confidence = 1.0 - assertion_result.get("refusal_score", 0.0)
+    refusal = assertion_result.get("should_refuse", len(evidence_pack) == 0)
+    refusal_reason = assertion_result.get("reason") if refusal else None
+    suggested_actions = ["上传更多相关文档到该知识库", "尝试换一种更具体的问法", "检查知识库是否已完成索引"] if refusal else []
+
+    return ChatResponse(
             answer=NO_EVIDENCE_ANSWER,
             citations=[],
             trace=RetrievalTrace(
@@ -152,7 +158,7 @@ async def chat(req: ChatRequest, db: AsyncSession = Depends(get_db), current_dev
     # ================================================================
     gen_result = await generation_service.generate(
         question=req.question, evidence_pack=evidence_pack,
-        strict_citation=req.strict_citation, api_key=req.api_key,
+        strict_citation=req.strict_citation,
     )
 
     latency_ms = (time.time() - start_time) * 1000
@@ -194,8 +200,8 @@ async def chat(req: ChatRequest, db: AsyncSession = Depends(get_db), current_dev
 
         citations.append(
             Citation(
-                citation_id=f"cit_{i:03d}",
-                evidence_id=c.get("evidence_id", f"ev_{i:03d}"),
+                citation_id=f"cit_{len(citations):03d}",
+                evidence_id=c.get("evidence_id", f"ev_{len(citations):03d}"),
                 source_type=c.get("source_type", "text"),
                 document_id=doc_uuid,
                 document_name=doc.original_filename if doc else c.get("filename", ""),
@@ -213,14 +219,9 @@ async def chat(req: ChatRequest, db: AsyncSession = Depends(get_db), current_dev
         )
 
     # Build refusal/confidence
-    refusal_result = refusal_engine.evaluate(evidence_pack, gen_result.get("answer", ""), citations)
+    refusal_result = _evaluate_refusal(evidence_pack, gen_result.get("answer", ""), citations)
     confidence = 1.0 - refusal_result.get("refusal_score", 0.0)
-    refusal = refusal_result.get("should_refuse", len(evidence_pack) == 0)
-    refusal_reason = refusal_result.get("reason") if refusal else None
-    suggested_actions = (
-        ["上传更多相关文档到该知识库", "尝试换一种更具体的问法", "检查知识库是否已完成索引"]
-        if refusal else []
-    )
+    # refusal evaluation moved to ChatResponse block below
 
     # ================================================================
     # 6. Save assistant message
@@ -249,6 +250,12 @@ async def chat(req: ChatRequest, db: AsyncSession = Depends(get_db), current_dev
     db.add(assistant_msg)
     await db.commit()
     await db.refresh(assistant_msg)
+
+    assertion_result = _evaluate_refusal(evidence_pack, gen_result.get("answer",""), verified_citations)
+    confidence = 1.0 - assertion_result.get("refusal_score", 0.0)
+    refusal = assertion_result.get("should_refuse", len(evidence_pack) == 0)
+    refusal_reason = assertion_result.get("reason") if refusal else None
+    suggested_actions = ["上传更多相关文档到该知识库", "尝试换一种更具体的问法", "检查知识库是否已完成索引"] if refusal else []
 
     return ChatResponse(
         answer=gen_result["answer"],
@@ -341,7 +348,7 @@ async def list_conversations(db: AsyncSession = Depends(get_db), current_device:
 
 
 @router.get("/conversations/{conv_id}")
-async def get_conversation(conv_id: uuid.UUID, db: AsyncSession = Depends(get_db)):
+async def get_conversation(conv_id: uuid.UUID, db: AsyncSession = Depends(get_db), current_device: dict = Depends(get_current_device)):
     conv = await db.get(Conversation, conv_id)
     if not conv:
         raise HTTPException(status_code=404, detail="Conversation not found")
@@ -377,7 +384,7 @@ async def get_conversation(conv_id: uuid.UUID, db: AsyncSession = Depends(get_db
 # Feedback
 # ================================================================
 @router.post("/messages/{msg_id}/feedback", response_model=FeedbackResponse)
-async def submit_feedback(msg_id: uuid.UUID, req: FeedbackRequest, db: AsyncSession = Depends(get_db)):
+async def submit_feedback(msg_id: uuid.UUID, req: FeedbackRequest, db: AsyncSession = Depends(get_db), current_device: dict = Depends(get_current_device)):
     msg = await db.get(Message, msg_id)
     if not msg:
         raise HTTPException(status_code=404, detail="Message not found")
@@ -444,7 +451,7 @@ async def chat_debug(req: ChatRequest, db: AsyncSession = Depends(get_db), curre
 
     gen_result = await generation_service.generate(
         question=req.question, evidence_pack=[e.to_dict() for e in evidence_pack.evidences],
-        strict_citation=req.strict_citation, api_key=req.api_key,
+        strict_citation=req.strict_citation,
     )
     answer = gen_result.get("answer", "")
     latency_ms = (time.time() - start_time) * 1000
