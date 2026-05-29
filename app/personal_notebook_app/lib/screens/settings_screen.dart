@@ -77,11 +77,24 @@ class _SettingsScreenState extends State<SettingsScreen> {
           ListTile(title: const Text('Device'), subtitle: Text('${app.deviceId!.substring(0, 8)}…')),
         const ListTile(title: Text('版本'), subtitle: Text('0.2.0+2')),
         const Divider(),
-        // DeepSeek API Key
+        // Model Provider
         Padding(padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8), child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          const Text('DeepSeek API Key', style: TextStyle(fontWeight: FontWeight.w600, fontSize: 13)),
+          const Text('模型提供商', style: TextStyle(fontWeight: FontWeight.w600, fontSize: 13)),
           const SizedBox(height: 4),
-          const Text('用于 Chat 和 Embedding。Key 仅保存在本地，不发送到后端以外的服务。', style: TextStyle(fontSize: 11, color: Colors.grey)),
+          Container(padding: const EdgeInsets.all(10),
+            decoration: BoxDecoration(color: Colors.blue.shade50, borderRadius: BorderRadius.circular(8)),
+            child: Row(children: [
+              const Icon(Icons.info_outline, size: 16, color: Colors.blue),
+              const SizedBox(width: 8),
+              Expanded(child: Text(app.deepSeekApiKey.isNotEmpty
+                ? '当前模式: Hybrid\n生成: DeepSeek / OpenAI API\n索引与检索: 本地 Core'
+                : '当前模式: Local\n生成: 本地 Ollama\n索引与检索: 本地 Core',
+                style: const TextStyle(fontSize: 12, color: Colors.blue))),
+            ])),
+          const SizedBox(height: 8),
+          const Text('DeepSeek / OpenAI API Key', style: TextStyle(fontSize: 13)),
+          const SizedBox(height: 4),
+          const Text('填写后使用在线 API (DeepSeek/OpenAI)。留空则自动使用本地 Ollama。Key 仅保存在本地。', style: TextStyle(fontSize: 11, color: Colors.grey)),
           const SizedBox(height: 8),
           Row(children: [
             Expanded(child: TextField(controller: _apiKeyCtrl,

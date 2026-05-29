@@ -17,14 +17,23 @@ Personal-KB 是一个支持本地/私有化部署的个人知识库系统。Phas
 | 向量检索 | Qdrant                                                   |
 | 模型服务 | model-gateway (Ollama / vLLM / OpenAI-compatible)        |
 
-### 默认模型建议
+### 部署模式
 
-| 模型类型  | 推荐模型                               | 向量维度 |
-| --------- | -------------------------------------- | -------- |
-| LLM       | Qwen3-8B-Instruct / Qwen3-14B-Instruct | —       |
-| Embedding | bge-m3                                 | 1024     |
-| Embedding | Qwen3-Embedding-0.6B                   | 1024     |
-| Rerank    | Qwen3-Reranker-0.6B                    | —       |
+PersonalNotebook 支持两种模式：
+
+| 模式 | 生成模型 | 检索/索引 | 数据隐私 |
+|------|---------|----------|---------|
+| **Local** | 本地 Ollama (qwen2.5:7b) | 本地 Core | 全本地 |
+| **Hybrid** | DeepSeek API (deepseek-v4-flash) | 本地 Core | evidence chunks 发送到 API |
+
+详见 [docs/model.md](docs/model.md)。
+
+### 默认模型
+
+| 模式 | LLM | Embedding | Rerank |
+|------|-----|-----------|--------|
+| Local | qwen2.5:7b | bge-m3 | qwen3-reranker-0.6b |
+| Hybrid | deepseek-v4-flash | text-embedding-3-small | deepseek-v4-flash |
 
 ## 环境要求
 

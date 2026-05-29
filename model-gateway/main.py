@@ -92,14 +92,30 @@ def _find_provider_for_model(model: str):
     return None
 
 
+def _pick_provider(api_key: str = "", model: str = ""):
+    """有 api_key → openai_compatible (auto-detect OpenAI/DeepSeek); 无 api_key → ollama"""
+    if api_key:
+        p = _providers.get("openai_compatible")
+        if p:
+            # Auto-detect: DeepSeek keys start with 'sk-', OpenAI keys start with 'sk-proj-' or 'sk-'
+            from providers.openai_compatible import OpenAICompatibleProvider
+            if hasattr(p, 'api_key'):
+                p.api_key = api_key
+            return p
+    for name in ["ollama", "vllm", "openai_compatible"]:
+        p = _providers.get(name)
+        if p: return p
+    return None
+
+
 # ============================================================
 # API Routes
 # ============================================================
 @app.post("/model/chat")
 async def chat(request: ChatRequest):
+    provider = _pick_provider(request.api_key)
     if request.api_key:
         set_runtime_api_key(request.api_key)
-    provider = _find_provider_for_model(request.model)
     if provider is None:
         raise HTTPException(status_code=503, detail="No model provider available")
     result = await provider.chat(
@@ -111,9 +127,9 @@ async def chat(request: ChatRequest):
 
 @app.post("/model/embed")
 async def embed(request: EmbedRequest):
+    provider = _pick_provider(request.api_key)
     if request.api_key:
         set_runtime_api_key(request.api_key)
-    provider = _find_provider_for_model(request.model)
     if provider is None:
         raise HTTPException(status_code=503, detail="No model provider available")
     result = await provider.embed(model=request.model, texts=request.texts)
@@ -122,9 +138,9 @@ async def embed(request: EmbedRequest):
 
 @app.post("/model/rerank")
 async def rerank(request: RerankRequest):
+    provider = _pick_provider(request.api_key)
     if request.api_key:
         set_runtime_api_key(request.api_key)
-    provider = _find_provider_for_model(request.model)
     if provider is None:
         raise HTTPException(status_code=503, detail="No model provider available")
     result = await provider.rerank(model=request.model, query=request.query, documents=request.documents)

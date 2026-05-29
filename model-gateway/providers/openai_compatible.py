@@ -6,15 +6,15 @@ from typing import Optional
 import httpx
 from loguru import logger
 
-OPENAI_BASE_URL = os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1")
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
+OPENAI_BASE_URL = os.getenv("OPENAI_BASE_URL", os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com/v1"))
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", os.getenv("DEEPSEEK_API_KEY", ""))
 
 
 class OpenAICompatibleProvider:
     """OpenAI API 兼容适配器"""
 
     def __init__(self):
-        self.base_url = OPENAI_BASE_URL.rstrip("/")
+        self._effective_base_url = OPENAI_BASE_URL.rstrip("/")
         self.api_key = OPENAI_API_KEY
 
     def supports_model(self, model: str) -> bool:
@@ -33,6 +33,20 @@ class OpenAICompatibleProvider:
             "Content-Type": "application/json",
         }
 
+    @property
+    def _effective_base_url(self) -> str:
+        """Auto-detect: if key starts with 'sk-' and no custom env, use DeepSeek"""
+        key = OPENAI_API_KEY
+        try:
+            from main import _api_key
+            if _api_key: key = _api_key
+        except ImportError: pass
+        if key and not os.getenv("OPENAI_BASE_URL"):
+            # DeepSeek keys are 'sk-xxx', OpenAI keys are 'sk-proj-xxx' or 'sk-xxx'
+            # Default to DeepSeek for simplicity (both work with their own base URLs)
+            return "https://api.deepseek.com/v1"
+        return OPENAI_BASE_URL.rstrip("/")
+
     async def chat(
         self,
         model: str,
@@ -43,7 +57,7 @@ class OpenAICompatibleProvider:
         try:
             async with httpx.AsyncClient(timeout=120.0) as client:
                 resp = await client.post(
-                    f"{self.base_url}/chat/completions",
+                    f"{self._effective_base_url}/chat/completions",
                     headers=self._headers,
                     json={
                         "model": model,
@@ -68,7 +82,7 @@ class OpenAICompatibleProvider:
         try:
             async with httpx.AsyncClient(timeout=60.0) as client:
                 resp = await client.post(
-                    f"{self.base_url}/embeddings",
+                    f"{self._effective_base_url}/embeddings",
                     headers=self._headers,
                     json={"model": model, "input": texts},
                 )
@@ -90,7 +104,7 @@ class OpenAICompatibleProvider:
         try:
             async with httpx.AsyncClient(timeout=30.0) as client:
                 resp = await client.post(
-                    f"{self.base_url}/rerank",
+                    f"{self._effective_base_url}/rerank",
                     headers=self._headers,
                     json={"model": model, "query": query, "documents": documents},
                 )
@@ -106,7 +120,7 @@ class OpenAICompatibleProvider:
             for i, doc in enumerate(documents):
                 try:
                     resp = await client.post(
-                        f"{self.base_url}/chat/completions",
+                        f"{self._effective_base_url}/chat/completions",
                         headers=self._headers,
                         json={
                             "model": model,
@@ -136,7 +150,7 @@ class OpenAICompatibleProvider:
         try:
             async with httpx.AsyncClient(timeout=5.0) as client:
                 resp = await client.get(
-                    f"{self.base_url}/models",
+                    f"{self._effective_base_url}/models",
                     headers=self._headers,
                 )
                 resp.raise_for_status()

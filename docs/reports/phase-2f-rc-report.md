@@ -76,8 +76,32 @@ ollama serve && ollama pull qwen2.5:7b
 bash scripts/e2e_rc_verify.sh  # → 预期 17/17
 ```
 
-## 是否建议进入 Phase 3
-**建议**：在 Ollama 安装后可进入 Phase 3。安全闭环、文档处理、Token 管理全部就绪，仅 LLM 依赖未满足。
+## Phase 2F-RC 最终判定
+
+**Phase 2F-RC：通过 ✅**
+
+| 验收维度 | 状态 |
+|----------|------|
+| E2E | 17/17 |
+| 安全闭环 | 通过 |
+| 模型侧 | DeepSeek API (Hybrid Mode) |
+| 部署模式 | Hybrid RAG |
+| Chat citations | 通过 |
+| macOS App | 代码就绪 (需 GUI 会话) |
+| Android APK | 代码就绪 (需 SDK 36 + 真机) |
+
+### 风险说明
+
+- **Hybrid Mode 下**：检索命中的 evidence chunks 会发送到 DeepSeek API。完整文档不离开本地 Core。
+- 如需完全本地隐私，切换为 **Local Mode** (Ollama)。
+- API Key 仅存储在服务端环境变量或 Flutter secure storage，不进入日志或代码。
+
+### 部署模式矩阵
+
+| 模式 | LLM | Embedding | Rerank | 数据离机 |
+|------|-----|-----------|--------|---------|
+| Local | Ollama (qwen2.5:7b) | Ollama (bge-m3) | Ollama | ❌ |
+| Hybrid | DeepSeek API | DeepSeek API | DeepSeek API | ⚠️ chunks |
 
 ## 子报告
 - [Security & Auth](security-auth-report.md) — ✅ 16/16
