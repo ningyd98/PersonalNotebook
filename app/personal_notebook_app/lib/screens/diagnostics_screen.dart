@@ -56,7 +56,7 @@ class _DiagnosticsScreenState extends State<DiagnosticsScreen> {
           ? Center(child: Text('加载失败: $_error', style: const TextStyle(color: Colors.red)))
           : ListView(padding: const EdgeInsets.all(16), children: [
               _sectionHeader('服务状态'),
-              _serviceCard(_diag),
+              _serviceCard(_diag ?? const {}),
               const SizedBox(height: 16),
               _sectionHeader('模型测试'),
               Row(children: [
@@ -68,7 +68,7 @@ class _DiagnosticsScreenState extends State<DiagnosticsScreen> {
               if (_embedTest != null) _testResultCard('Embedding', _embedTest!),
               const SizedBox(height: 16),
               _sectionHeader('配置信息'),
-              _configCard(_diag),
+              _configCard(_diag ?? const {}),
             ]),
     );
   }
