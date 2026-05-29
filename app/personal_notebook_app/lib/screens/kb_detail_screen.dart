@@ -32,6 +32,17 @@ class _KbDetailScreenState extends State<KbDetailScreen> {
       actions: [TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('取消')), FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('重试'))],
     ));
     if (ok != true) return;
+    try { await apiClient.post('/api/documents/$docId/retry'); _load(); }
+    on ApiException catch (e) { if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('失败: ${e.message}'))); }
+  }
+
+  Future<void> _reprocess(String docId) async {
+    final ok = await showDialog<bool>(context: context, builder: (ctx) => AlertDialog(
+      title: const Text('重新处理确认'),
+      content: const Text('该文档已就绪，重新处理将清除现有索引并重建。确认继续？'),
+      actions: [TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('取消')), FilledButton(onPressed: () => Navigator.pop(ctx, true), style: FilledButton.styleFrom(backgroundColor: Colors.orange), child: const Text('强制重新处理'))],
+    ));
+    if (ok != true) return;
     try { await apiClient.post('/api/documents/$docId/retry', body: {'force': true}); _load(); }
     on ApiException catch (e) { if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('失败: ${e.message}'))); }
   }
@@ -95,9 +106,11 @@ class _KbDetailScreenState extends State<KbDetailScreen> {
         final id = d['document_id']?.toString() ?? '';
         final name = d['original_filename']?.toString() ?? '';
         if (v == 'retry') _retry(id);
+        if (v == 'reprocess') _reprocess(id);
         if (v == 'delete') _delete(id, name);
       }, itemBuilder: (_) => [
-        const PopupMenuItem(value: 'retry', child: ListTile(leading: Icon(Icons.refresh, size: 18), title: Text('重试', style: TextStyle(fontSize: 14)), dense: true)),
+        if (isFailed) const PopupMenuItem(value: 'retry', child: ListTile(leading: Icon(Icons.refresh, size: 18), title: Text('重试', style: TextStyle(fontSize: 14)), dense: true)),
+        if (isReady) const PopupMenuItem(value: 'reprocess', child: ListTile(leading: Icon(Icons.replay, size: 18, color: Colors.orange), title: Text('重新处理', style: TextStyle(fontSize: 14, color: Colors.orange)), dense: true)),
         const PopupMenuItem(value: 'delete', child: ListTile(leading: Icon(Icons.delete, size: 18, color: Colors.red), title: Text('删除', style: TextStyle(fontSize: 14, color: Colors.red)), dense: true)),
       ]),
     ));

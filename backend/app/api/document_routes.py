@@ -28,6 +28,25 @@ settings = get_settings()
 router = APIRouter()
 
 
+def _mask_storage_path(path: str) -> str:
+    """Mask full local/MinIO paths — only return last 2 segments"""
+    if not path:
+        return ""
+    parts = path.replace("\\", "/").rstrip("/").split("/")
+    visible = parts[-2:] if len(parts) >= 2 else parts
+    return ".../" + "/".join(visible)
+
+
+def _mask_path(path: str) -> str:
+    """Mask absolute paths — return filename only"""
+    if not path:
+        return ""
+    for prefix in ("/Users/", "/home/", "C:\\", "minio://"):
+        if path.startswith(prefix):
+            return path.replace("\\", "/").split("/")[-1]
+    return path
+
+
 def _compute_sha256(file_path: str) -> str:
     sha = hashlib.sha256()
     with open(file_path, "rb") as f:
@@ -293,72 +312,9 @@ async def import_folder(
 
 
 # ================================================================
-# List / Get Documents
-# ================================================================
-@router.get("/kbs/{kb_id}/documents")
-async def list_documents(
-    kb_id: uuid.UUID,
-    page: int = Query(default=1, ge=1),
-    page_size: int = Query(default=20, ge=1, le=100),
-    file_type: Optional[str] = Query(default=None),
-    parse_status: Optional[str] = Query(default=None),
-    keyword: Optional[str] = Query(default=None),
-    db: AsyncSession = Depends(get_db),
-    current_device: dict = Depends(get_current_device),
-):
-    kb = await db.get(KnowledgeBase, kb_id)
-    if not kb or kb.is_deleted:
-        raise HTTPException(status_code=404, detail="Knowledge base not found")
 
-    conditions = [Document.kb_id == kb_id, Document.is_deleted == False]
-    if file_type:
-        conditions.append(Document.file_type == file_type)
-    if parse_status:
-        conditions.append(Document.parse_status == parse_status)
-    if keyword:
-        conditions.append(
-            or_(Document.filename.ilike(f"%{keyword}%"), Document.title.ilike(f"%{keyword}%"))
-        )
+# List moved to kb_routes.py — Phase 3B-hotfix
 
-    total_q = select(func.count(Document.id)).where(*conditions)
-    total = (await db.execute(total_q)).scalar() or 0
-
-    q = (
-        select(Document)
-        .where(*conditions)
-        .order_by(desc(Document.updated_at))
-        .offset((page - 1) * page_size)
-        .limit(page_size)
-    )
-    result = await db.execute(q)
-    docs = result.scalars().all()
-
-    items = []
-    for doc in docs:
-        block_count = (await db.execute(
-            select(func.count(DocumentBlock.id)).where(DocumentBlock.document_id == doc.id)
-        )).scalar() or 0
-        chunk_count = (await db.execute(
-            select(func.count(DocumentChunk.id)).where(DocumentChunk.document_id == doc.id)
-        )).scalar() or 0
-        items.append({
-            "id": doc.id, "kb_id": doc.kb_id, "filename": doc.filename,
-            "original_filename": doc.original_filename, "file_type": doc.file_type,
-            "mime_type": doc.mime_type, "file_size": doc.file_size,
-            "file_hash": doc.file_hash, "storage_path": doc.storage_path,
-            "source_type": doc.source_type, "source_uri": doc.source_uri,
-            "document_version": doc.document_version,
-            "active_version": doc.active_version,
-            "status": doc.status,
-            "parse_status": doc.parse_status, "embed_status": doc.embed_status,
-            "index_status": doc.index_status,
-            "title": doc.title, "author": doc.author,
-            "metadata_json": doc.metadata_json,
-            "block_count": block_count, "chunk_count": chunk_count,
-            "created_at": doc.created_at.isoformat(), "updated_at": doc.updated_at.isoformat(),
-        })
-
-    return {"total": total, "page": page, "page_size": page_size, "items": items}
 
 
 @router.get("/documents/{doc_id}")
@@ -390,11 +346,13 @@ async def get_document(doc_id: uuid.UUID, db: AsyncSession = Depends(get_db), cu
         quality_report = doc.metadata_json["quality_report"]
 
     return {
-        "id": doc.id, "kb_id": doc.kb_id, "filename": doc.filename,
+        "document_id": str(doc.id), "kb_id": str(doc.kb_id), "filename": doc.filename,
         "original_filename": doc.original_filename, "file_type": doc.file_type,
         "mime_type": doc.mime_type, "file_size": doc.file_size,
-        "file_hash": doc.file_hash, "storage_path": doc.storage_path,
-        "source_type": doc.source_type, "source_uri": doc.source_uri,
+        "file_hash": doc.file_hash,
+        "object_key": doc.filename,
+        "masked_storage_path": _mask_storage_path(doc.storage_path),
+        "source_type": doc.source_type, "source_uri": _mask_path(doc.source_uri or ""),
         "document_version": doc.document_version,
         "active_version": doc.active_version,
         "status": doc.status,
@@ -419,10 +377,13 @@ async def delete_document(doc_id: uuid.UUID, db: AsyncSession = Depends(get_db),
     doc.is_deleted = True
     doc.deleted_at = dt.datetime.now(dt.timezone.utc)
     doc.status = "DELETED"
-    for chunk in doc.chunks:
-        chunk.is_deleted = True
+    # Document-level soft delete only — chunk soft-delete via document filter
     await db.commit()
-    return {"document_id": str(doc.id), "deleted": True, "cleanup_status": "soft_deleted", "cleanup_job_id": None}
+    return {
+        "document_id": str(doc.id), "deleted": True,
+        "cleanup_status": "document_soft_deleted",
+        "vectors_cleanup": "pending", "object_cleanup": "pending",
+    }
 
 
 @router.post("/documents/{doc_id}/retry")
@@ -433,13 +394,13 @@ async def retry_document(doc_id: uuid.UUID, db: AsyncSession = Depends(get_db),
         raise HTTPException(status_code=404, detail="Document not found")
     if doc.is_deleted:
         raise HTTPException(status_code=400, detail="Cannot retry a deleted document")
+    if doc.status == "READY" and not force:
+        raise HTTPException(status_code=400, detail="READY document cannot be retried. Use force=true")
     retryable = doc.status in ("FAILED", "ERROR", "UPLOADED", "PARSING")
     if not retryable and not force:
         raise HTTPException(status_code=400, detail=f"Document status {doc.status} not retryable. Use force=true")
-    if doc.status == "READY" and not force:
-        raise HTTPException(status_code=400, detail="READY document cannot be retried. Use force=true")
-    from app.models.models import IngestJob
-    from sqlalchemy import desc, select
+
+    from sqlalchemy import desc
     last_job = (await db.execute(
         select(IngestJob).where(IngestJob.document_id == doc.id)
         .order_by(desc(IngestJob.updated_at)).limit(1)
@@ -447,10 +408,13 @@ async def retry_document(doc_id: uuid.UUID, db: AsyncSession = Depends(get_db),
     retry_count = (last_job.retry_count if last_job else 0) + 1
     if retry_count > 5 and not force:
         raise HTTPException(status_code=400, detail="Retry limit (5) exceeded. Use force=true")
+
     import datetime as _dt
-    new_job = IngestJob(kb_id=doc.kb_id, document_id=doc.id, job_type="ingest",
-                        status="PENDING", retry_count=retry_count,
-                        last_retry_at=_dt.datetime.now(_dt.timezone.utc))
+    new_job = IngestJob(
+        kb_id=doc.kb_id, document_id=doc.id, job_type="ingest",
+        status="PENDING", retry_count=retry_count,
+        last_retry_at=_dt.datetime.now(_dt.timezone.utc),
+    )
     db.add(new_job)
     doc.status = "UPLOADED"
     doc.parse_status = "pending"
@@ -459,7 +423,21 @@ async def retry_document(doc_id: uuid.UUID, db: AsyncSession = Depends(get_db),
     doc.last_retry_at = _dt.datetime.now(_dt.timezone.utc)
     await db.commit()
     await db.refresh(new_job)
-    return {"document_id": str(doc.id), "job_id": str(new_job.id), "status": "PENDING"}
+
+    # Dispatch Celery task
+    try:
+        from app.workers.celery_app import ingest_document
+        ingest_document.apply_async(
+            args=[str(doc.id), str(doc.kb_id)],
+            task_id=str(new_job.id),
+        )
+        return {"document_id": str(doc.id), "job_id": str(new_job.id), "status": "PENDING", "dispatched": True}
+    except Exception as e:
+        new_job.status = "FAILED"
+        new_job.error_message = _sanitize(str(e))[:200]
+        doc.status = "FAILED"
+        await db.commit()
+        return {"success": False, "document_id": str(doc.id), "job_id": str(new_job.id), "error": _sanitize(str(e))[:200]}
 
 
 @router.post("/documents/{doc_id}/reparse")

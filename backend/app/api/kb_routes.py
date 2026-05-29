@@ -195,6 +195,11 @@ async def kb_stats(kb_id: uuid.UUID, db: AsyncSession = Depends(get_db),
         func.count(case((Document.status == "READY", 1))).label("ready"),
         func.count(case((Document.status == "UPLOADED", 1))).label("uploaded"),
         func.count(case((Document.status == "PARSING", 1))).label("parsing"),
+        func.count(case((Document.status == "PARSED", 1))).label("parsed"),
+        func.count(case((Document.status == "CHUNKING", 1))).label("chunking"),
+        func.count(case((Document.status == "EMBEDDING", 1))).label("embedding"),
+        func.count(case((Document.status == "INDEXING", 1))).label("indexing"),
+        func.count(case((Document.status == "REINDEXING", 1))).label("reindexing"),
         func.count(case((Document.status == "FAILED", 1))).label("failed"),
     ).where(Document.kb_id == kb_id, Document.is_deleted == False)
     stats = (await db.execute(stmt)).one()
@@ -209,7 +214,11 @@ async def kb_stats(kb_id: uuid.UUID, db: AsyncSession = Depends(get_db),
     return {
         "kb_id": str(kb.id), "name": kb.name, "description": kb.description,
         "documents": {"total": stats.total, "ready": stats.ready, "uploaded": stats.uploaded,
-                      "parsing": stats.parsing, "failed": stats.failed},
+                      "parsing": stats.parsing, "parsed": stats.parsed,
+                      "chunking": stats.chunking, "embedding": stats.embedding,
+                      "indexing": stats.indexing, "reindexing": stats.reindexing,
+                      "failed": stats.failed,
+                      "processing_total": (stats.parsing or 0)+(stats.parsed or 0)+(stats.chunking or 0)+(stats.embedding or 0)+(stats.indexing or 0)+(stats.reindexing or 0)},
         "index": {"active_version": 1, "total_chunks": chunk_count,
                   "total_vectors": chunk_count, "last_indexed_at": None},
         "last_error": _sanitize(last_failed.error_message[:200]) if last_failed and last_failed.error_message else None,
@@ -220,15 +229,17 @@ async def kb_stats(kb_id: uuid.UUID, db: AsyncSession = Depends(get_db),
 async def kb_documents(kb_id: uuid.UUID, db: AsyncSession = Depends(get_db),
                        current_device: dict = Depends(get_current_device),
                        page: int = Query(1, ge=1), page_size: int = Query(20, ge=1, le=100),
-                       status: Optional[str] = None, search: Optional[str] = None):
+                       status: Optional[str] = None, search: Optional[str] = None,
+                       file_type: Optional[str] = None, parse_status: Optional[str] = None):
     kb = (await db.execute(select(KnowledgeBase).where(KnowledgeBase.id == kb_id))).scalar_one_or_none()
     if not kb:
         raise HTTPException(status_code=404, detail="KB not found")
     q = select(Document).where(Document.kb_id == kb_id, Document.is_deleted == False)
     if status:
         q = q.where(Document.status == status)
-    if search:
-        q = q.where(Document.original_filename.ilike(f"%{search}%"))
+    if search: q = q.where(Document.original_filename.ilike(f"%{search}%"))
+    if file_type: q = q.where(Document.file_type == file_type)
+    if parse_status: q = q.where(Document.parse_status == parse_status)
     q = q.order_by(desc(Document.updated_at))
     total = (await db.execute(select(func.count()).select_from(q.subquery()))).scalar()
     rows = (await db.execute(q.offset((page - 1) * page_size).limit(page_size))).scalars().all()
