@@ -5,11 +5,25 @@
 - 仓库: https://github.com/ningyd98/PersonalNotebook.git
 - 技术栈: FastAPI + Next.js + Flutter + PostgreSQL + Qdrant + MinIO + Redis + Celery
 
-## 当前阶段: Phase 3 已完成 (2026-05-30)
+## 当前阶段: Phase 3 完成 + 代码审查修复 + macOS安装包 (2026-05-30)
 
 ### 已实现的解析器
 Markdown, TXT, PDF, Fallback (Phase 1)
 DOCX, PPTX, XLSX, LaTeX, Image, Code, Archive, Audio, Video (Phase 3)
+
+### 代码审查修复 (2026-05-30 第二轮)
+- audio_parser: 改用 faster-whisper 替代 openai-whisper
+- image_parser: 添加 EXIF/缩略图/PaddleOCR
+- latex_parser: equation/theorem/label/ref/cite 独立block
+- code_parser: import re 规范化 + JSON/YAML/TOML支持
+- video_parser: 添加 ASR 转写
+- archive_parser: zip/tar slip 安全修复
+
+### macOS 一键安装包
+- PersonalNotebook.app + DMG
+- install.sh: 自动安装 Homebrew/PG/Redis/MinIO/Qdrant/Python/Node
+- quick_start.sh: 支持 Docker 和 Homebrew 原生模式
+- 数据目录: ~/PersonalNotebook-Data/
 
 ### Model Gateway Providers
 Ollama, OpenAI-compatible (DeepSeek), vLLM, DashScope (Phase 3)
