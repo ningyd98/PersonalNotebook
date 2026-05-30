@@ -116,6 +116,11 @@ async def chat(request: ChatRequest):
     provider = _pick_provider(request.api_key)
     if request.api_key:
         set_runtime_api_key(request.api_key)
+    # Check for openai_compatible missing key
+    import os
+    if provider and hasattr(provider, "__class__") and provider.__class__.__name__ == "OpenAICompatibleProvider":
+        if not (os.getenv("DEEPSEEK_API_KEY") or os.getenv("OPENAI_API_KEY") or _api_key):
+            raise HTTPException(status_code=503, detail="missing_api_key: no API key configured")
     if provider is None:
         raise HTTPException(status_code=503, detail="No model provider available")
     result = await provider.chat(
@@ -170,8 +175,6 @@ async def status():
         elif name == "ollama":
             entry["base_url"] = "http://localhost:11434"
         provider_statuses.append(entry)
-    return {"providers": provider_statuses}
-
     return {"providers": provider_statuses}
 
 

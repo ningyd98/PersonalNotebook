@@ -35,7 +35,7 @@ echo ""; echo "--- Auth regression ---"
 cd "$ROOT"
 http_code() { curl -sf -o /dev/null -w "%{http_code}" "$@" 2>/dev/null; }
 CURL_BASE="http://localhost:8000"
-for ep in "/api/chat" "/api/conversations" "/api/chunks/0000-0000" "/api/kbs" "/api/system/diagnostics"; do
+for ep in "/api/chat" "/api/conversations" "/api/chunks/a1b2c3d4-e5f6-7890-abcd-ef1234567890" "/api/kbs" "/api/system/diagnostics"; do
   CODE=$(http_code "${CURL_BASE}${ep}")
   if [ "$CODE" = "401" ] || [ "$CODE" = "403" ]; then
     echo "  ✅ $(echo $ep | cut -c1-40): $CODE"; PASS=$((PASS+1))

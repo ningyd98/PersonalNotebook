@@ -36,7 +36,12 @@ def _classify_model_error(e: Exception) -> dict:
         return {"type": "timeout", "message": "模型请求超时", "retryable": True}
     if isinstance(e, httpx.HTTPStatusError):
         code = e.response.status_code
-        body = (e.response.text or "")[:200]
+        body = (e.response.text or "")[:300].lower()
+        # Text-based API key detection
+        if any(kw in body for kw in ("missing api key", "no api key", "api key required", "unauthorized", "invalid api key", "authentication failed")):
+            if "missing" in body or "required" in body or "no api" in body:
+                return {"type": "missing_api_key", "message": "缺少 API Key，请检查环境变量配置", "retryable": False}
+            return {"type": "invalid_api_key", "message": "API Key 无效或已过期", "retryable": False}
         if code == 401 or code == 403:
             return {"type": "invalid_api_key", "message": "API Key 无效或已过期", "retryable": False}
         if code == 429:

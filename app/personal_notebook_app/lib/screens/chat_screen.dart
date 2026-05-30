@@ -22,6 +22,7 @@ class _ChatScreenState extends State<ChatScreen> {
   double? _citationCoverage;
   double? _confidence;
   List<dynamic> _suggestedActions = [];
+  Map<String, dynamic>? _modelError;
 
   @override
   void initState() {
@@ -69,6 +70,7 @@ class _ChatScreenState extends State<ChatScreen> {
         final conf = resp['confidence'];
         _confidence = conf is num ? conf.toDouble() : null;
         _suggestedActions = (resp['suggested_actions'] as List<dynamic>?) ?? [];
+        _modelError = resp['model_error'] as Map<String, dynamic>?;
       });
     } on ApiException catch (e) {
       setState(() => _error = e.message);
@@ -88,6 +90,7 @@ class _ChatScreenState extends State<ChatScreen> {
         ])),
         Expanded(child: ListView(padding: const EdgeInsets.all(12), children: [
           if (_answer.isNotEmpty) ...[
+            if (_modelError != null) _ModelErrorCard(error: _modelError!),
             if (isRefusal)
               Container(
                 padding: const EdgeInsets.all(12),
@@ -179,5 +182,38 @@ class _CitationCardState extends State<_CitationCard> {
         if (_error != null) Text(_error!, style: const TextStyle(fontSize: 11, color: Colors.red)),
         if (_fullContent != null) Container(padding: const EdgeInsets.all(8), decoration: BoxDecoration(color: Colors.blue.shade50, borderRadius: BorderRadius.circular(6)), child: SelectableText(_fullContent!, style: const TextStyle(fontSize: 12))),
       ]));
+  }
+}
+
+const _modelErrorLabels = {
+  'gateway_unavailable': '模型网关不可用',
+  'upstream_llm_unavailable': '上游模型不可用',
+  'missing_api_key': '缺少 API Key',
+  'invalid_api_key': 'API Key 无效',
+  'model_not_found': '模型不存在或未拉取',
+  'rate_limited': '请求频率受限',
+  'timeout': '模型请求超时',
+  'unknown_model_error': '未知模型错误',
+};
+
+class _ModelErrorCard extends StatelessWidget {
+  final Map<String, dynamic> error;
+  const _ModelErrorCard({required this.error});
+  @override
+  Widget build(BuildContext context) {
+    final type = error['type']?.toString() ?? 'unknown_model_error';
+    final msg = error['message']?.toString() ?? '';
+    final label = _modelErrorLabels[type] ?? type;
+    final retryable = error['retryable'] == true;
+    return Container(
+      margin: const EdgeInsets.only(bottom: 12),
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(color: Colors.red.shade50, borderRadius: BorderRadius.circular(8), border: Border.all(color: Colors.red.shade200)),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Row(children: [const Icon(Icons.error_outline, size: 16, color: Colors.red), const SizedBox(width: 6), Text(label, style: TextStyle(fontWeight: FontWeight.bold, color: Colors.red.shade700))]),
+        if (msg.isNotEmpty) Text(msg, style: const TextStyle(fontSize: 12, color: Colors.red)),
+        Text(retryable ? '可重试' : '不可重试', style: TextStyle(fontSize: 11, color: Colors.grey.shade600)),
+      ]),
+    );
   }
 }

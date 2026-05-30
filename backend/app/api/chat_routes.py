@@ -311,6 +311,7 @@ async def chat(req: ChatRequest, db: AsyncSession = Depends(get_db), current_dev
         suggested_actions=suggested_actions,
         should_refuse=refusal,
         citation_coverage=(len(citations) / len(evidence_pack)) if evidence_pack else 0.0,
+        model_error=gen_result.get("model_error"),
     )
 
 
