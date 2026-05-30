@@ -1,5 +1,5 @@
 """
-LLM 生成服务 — 基于 Evidence Pack 生成回答
+LLM 生成服务 — Phase 3D: error classification + fallback
 """
 
 import re
@@ -24,9 +24,42 @@ RAG_SYSTEM_PROMPT = (
     "回答要用中文，结构清晰，适合个人学习和工作使用。"
 )
 
+FALLBACK_ANSWER = "模型服务暂时不可用。以下为知识库中检索到的相关证据，尚未经模型整理。"
+
+
+def _classify_model_error(e: Exception) -> dict:
+    """Classify model errors into typed categories."""
+    msg = str(e)
+    if isinstance(e, httpx.ConnectError):
+        return {"type": "gateway_unavailable", "message": "无法连接到模型网关", "retryable": True}
+    if isinstance(e, httpx.TimeoutException):
+        return {"type": "timeout", "message": "模型请求超时", "retryable": True}
+    if isinstance(e, httpx.HTTPStatusError):
+        code = e.response.status_code
+        body = (e.response.text or "")[:200]
+        if code == 401 or code == 403:
+            return {"type": "invalid_api_key", "message": "API Key 无效或已过期", "retryable": False}
+        if code == 429:
+            return {"type": "rate_limited", "message": "API 请求频率限制", "retryable": True}
+        if code >= 500:
+            return {"type": "upstream_llm_unavailable", "message": f"上游模型服务不可用 (HTTP {code})", "retryable": True}
+        if code == 404:
+            return {"type": "model_not_found", "message": "模型不存在或未拉取", "retryable": False}
+        return {"type": "unknown_model_error", "message": sanitize_error(msg[:200]), "retryable": True}
+    return {"type": "unknown_model_error", "message": sanitize_error(msg[:200]), "retryable": True}
+
+
+def sanitize_error(msg: str) -> str:
+    """Remove sensitive data from error messages."""
+    import re
+    msg = re.sub(r'sk-[a-zA-Z0-9]{10,}', 'sk-***REDACTED', msg)
+    msg = re.sub(r'Bearer\s+\S+', 'Bearer ***REDACTED', msg)
+    msg = re.sub(r'(api_key|apikey)=[^&\s]+', r'\1=***REDACTED', msg, flags=re.IGNORECASE)
+    return msg
+
 
 class GenerationService:
-    """LLM 生成服务"""
+    """LLM 生成服务 with error classification and fallback."""
 
     def __init__(self, model: Optional[str] = None):
         self.model = model or settings.DEFAULT_LLM
@@ -35,46 +68,48 @@ class GenerationService:
     async def generate(
         self, question: str, evidence_pack: list[dict],
         conversation_history: Optional[list[dict]] = None,
-        strict_citation: bool = True, api_key: str = "",
+        strict_citation: bool = True,
     ) -> dict:
         start_time = time.time()
+        model_error = None
+        answer = ""
+        raw_citations = []
+
         user_prompt = self._build_prompt(question, evidence_pack, strict_citation)
         messages = [{"role": "system", "content": RAG_SYSTEM_PROMPT}]
         if conversation_history:
             messages.extend(conversation_history[-6:])
         messages.append({"role": "user", "content": user_prompt})
+
         try:
             async with httpx.AsyncClient(timeout=120.0) as client:
                 resp = await client.post(
                     f"{self.gateway_url}/model/chat",
-                    json={
-                        "model": self.model, "messages": messages,
-                        "temperature": 0.2, "max_tokens": 2048,
-                        "api_key": api_key,
-                    },
+                    json={"model": self.model, "messages": messages,
+                          "temperature": 0.2, "max_tokens": 2048},
                 )
                 resp.raise_for_status()
                 data = resp.json()
                 answer = data.get("content", "")
-
         except Exception as e:
-            logger.error(f"LLM generation failed: {e}")
-            answer = "抱歉，模型服务暂时不可用，请稍后重试。"
+            logger.error(f"LLM generation failed: {sanitize_error(str(e))}")
+            model_error = _classify_model_error(e)
             if evidence_pack:
-                answer += "\n\n以下是检索到的相关资料（未经 LLM 整理）：\n\n"
-                for ev in evidence_pack[:3]:
-                    answer += f"- {ev.get('filename', '')}: {ev.get('content', '')[:200]}...\n"
+                answer = FALLBACK_ANSWER
+            else:
+                answer = "抱歉，模型服务暂时不可用，且知识库中未检索到相关证据。"
 
         latency_ms = (time.time() - start_time) * 1000
 
-        # 验证引用
-        citations = self._extract_citations(answer, evidence_pack) if strict_citation else []
+        if strict_citation:
+            raw_citations = self._extract_citations(answer, evidence_pack)
 
         return {
             "answer": answer,
-            "citations": citations,
+            "citations": raw_citations,
             "model": self.model,
             "latency_ms": latency_ms,
+            "model_error": model_error,
         }
 
     @staticmethod

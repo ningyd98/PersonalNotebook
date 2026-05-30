@@ -270,6 +270,7 @@ class ChatResponse(BaseModel):
     suggested_actions: list[str] = []
     should_refuse: bool = False
     citation_coverage: float = 0.0
+    model_error: Optional[dict] = None
     conversation_id: uuid.UUID
     message_id: uuid.UUID
     model: str

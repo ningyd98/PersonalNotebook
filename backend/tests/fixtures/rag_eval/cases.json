@@ -1,0 +1,36 @@
+[
+  {
+    "id": "case_001",
+    "document": "personal_kb_test.md",
+    "question": "PersonalNotebook 使用什么组件做向量检索？",
+    "expected_keywords": ["Qdrant", "向量"],
+    "expected_refusal": false
+  },
+  {
+    "id": "case_002",
+    "document": "personal_kb_test.md",
+    "question": "文档上传后会经历哪些处理阶段？",
+    "expected_keywords": ["解析", "切片", "嵌入", "索引"],
+    "expected_refusal": false
+  },
+  {
+    "id": "case_003",
+    "document": "personal_kb_test.md",
+    "question": "PostgreSQL 的版本号是多少？",
+    "expected_keywords": ["16"],
+    "expected_refusal": false
+  },
+  {
+    "id": "case_004",
+    "document": "personal_kb_test.md",
+    "question": "这份文档有没有提到火星基地预算？",
+    "expected_refusal": true
+  },
+  {
+    "id": "case_005",
+    "document": "personal_kb_test.md",
+    "question": "Hybrid 模式和 Local 模式有什么区别？",
+    "expected_keywords": ["DeepSeek", "Ollama", "本地"],
+    "expected_refusal": false
+  }
+]

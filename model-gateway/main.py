@@ -149,13 +149,28 @@ async def rerank(request: RerankRequest):
 
 @app.get("/model/status")
 async def status():
+    """Phase 3D: enhanced status with api_key indicators + masked info."""
+    import os
     provider_statuses = []
     for name, provider in _providers.items():
+        entry = {"name": name, "status": "unknown", "models": [], "error": None}
         try:
             s = await provider.status()
-            provider_statuses.append({"name": name, **s})
+            entry["status"] = s.get("status", "unknown")
+            entry["models"] = s.get("models", [])[:10]
         except Exception as e:
-            provider_statuses.append({"name": name, "status": "error", "error": str(e)})
+            entry["status"] = "error"
+            entry["error"] = str(e)[:200]
+        # Enrich with provider-specific info
+        if name == "openai_compatible":
+            entry["has_api_key"] = bool(os.getenv("DEEPSEEK_API_KEY") or os.getenv("OPENAI_API_KEY"))
+            entry["base_url_masked"] = (os.getenv("OPENAI_BASE_URL") or os.getenv("DEEPSEEK_BASE_URL") or "https://api.deepseek.com/v1")
+            if not entry["has_api_key"] and entry["status"] == "disconnected":
+                entry["status"] = "missing_api_key"
+        elif name == "ollama":
+            entry["base_url"] = "http://localhost:11434"
+        provider_statuses.append(entry)
+    return {"providers": provider_statuses}
 
     return {"providers": provider_statuses}
 
