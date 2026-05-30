@@ -3,40 +3,15 @@ Personal-KB Model Gateway — 统一模型服务网关
 独立于业务后端，提供 LLM / Embedding / Rerank 的统一 API
 """
 
+import os
+
 from fastapi import FastAPI, HTTPException
 from loguru import logger
 from pydantic import BaseModel, Field
 
+from schemas import ChatMessage, ChatRequest, EmbedRequest, RerankRequest, TokenizeRequest, TokenizeResponse
+
 app = FastAPI(title="Personal-KB Model Gateway", version="0.1.0")
-
-
-# ============================================================
-# Request Schemas
-# ============================================================
-class ChatMessage(BaseModel):
-    role: str
-    content: str
-
-
-class ChatRequest(BaseModel):
-    model: str = "deepseek-chat"
-    messages: list[ChatMessage]
-    temperature: float = Field(default=0.2, ge=0.0, le=2.0)
-    max_tokens: int = Field(default=2048, ge=1, le=8192)
-    api_key: str = ""
-
-
-class EmbedRequest(BaseModel):
-    model: str = "text-embedding-3-small"
-    texts: list[str]
-    api_key: str = ""
-
-
-class RerankRequest(BaseModel):
-    model: str = "deepseek-chat"
-    query: str
-    documents: list[str]
-    api_key: str = ""
 
 
 _providers: dict[str, object] = {}
@@ -72,20 +47,32 @@ try:
 except ImportError:
     logger.warning("VLLMProvider not available")
 
+try:
+    from providers.dashscope import DashScopeProvider
+    register_provider("dashscope", DashScopeProvider())
+except ImportError:
+    logger.warning("DashScopeProvider not available")
+
 
 def _find_provider_for_model(model: str):
-    """根据模型名 + 环境变量选择 provider (vllm > openai_compatible > ollama)"""
+    """根据模型名 + 环境变量选择 provider (dashscope > openai_compatible > vllm > ollama)"""
     import os
     preferred = os.getenv("MODEL_PROVIDER", "")
     if preferred and preferred in _providers:
         return _providers[preferred]
 
+    # Qwen / gte models → dashscope
+    if any(model.startswith(p) for p in ("qwen", "gte-rerank")):
+        p = _providers.get("dashscope")
+        if p:
+            return p
+
     # DeepSeek / OpenAI models → openai_compatible
     if any(model.startswith(p) for p in ("gpt-", "o1", "o3", "text-embedding", "deepseek")):
         return _providers.get("openai_compatible")
 
-    # 按优先级: vllm > openai_compatible > ollama
-    for name in ["vllm", "openai_compatible", "ollama"]:
+    # 按优先级: dashscope > openai_compatible > vllm > ollama
+    for name in ["dashscope", "openai_compatible", "vllm", "ollama"]:
         p = _providers.get(name)
         if p:
             return p
@@ -93,18 +80,27 @@ def _find_provider_for_model(model: str):
 
 
 def _pick_provider(api_key: str = "", model: str = ""):
-    """有 api_key → openai_compatible (auto-detect OpenAI/DeepSeek); 无 api_key → ollama"""
+    """有 api_key → 按模型/环境匹配 provider; 无 api_key → ollama"""
+    import os
+    # DashScope key → dashscope provider
+    if os.getenv("DASHSCOPE_API_KEY"):
+        p = _providers.get("dashscope")
+        if p:
+            return p
+
     if api_key:
         p = _providers.get("openai_compatible")
         if p:
-            # Auto-detect: DeepSeek keys start with 'sk-', OpenAI keys start with 'sk-proj-' or 'sk-'
             from providers.openai_compatible import OpenAICompatibleProvider
             if hasattr(p, 'api_key'):
                 p.api_key = api_key
             return p
-    for name in ["ollama", "vllm", "openai_compatible"]:
+
+    # 按优先级: dashscope > openai_compatible > vllm > ollama
+    for name in ["dashscope", "openai_compatible", "vllm", "ollama"]:
         p = _providers.get(name)
-        if p: return p
+        if p:
+            return p
     return None
 
 
@@ -174,6 +170,11 @@ async def status():
                 entry["status"] = "missing_api_key"
         elif name == "ollama":
             entry["base_url"] = "http://localhost:11434"
+        elif name == "dashscope":
+            entry["has_api_key"] = bool(os.getenv("DASHSCOPE_API_KEY"))
+            entry["base_url_masked"] = os.getenv("DASHSCOPE_BASE_URL", "https://dashscope.aliyuncs.com/compatible-mode/v1")
+            if not entry["has_api_key"] and entry["status"] == "disconnected":
+                entry["status"] = "missing_api_key"
         provider_statuses.append(entry)
     return {"providers": provider_statuses}
 
@@ -181,3 +182,18 @@ async def status():
 @app.get("/health")
 async def health():
     return {"status": "ok"}
+
+
+@app.post("/model/tokenize", response_model=TokenizeResponse)
+async def tokenize(request: TokenizeRequest):
+    """Tokenize text, return token count using tiktoken (cl100k_base) or fallback"""
+    try:
+        import tiktoken
+        enc = tiktoken.get_encoding("cl100k_base")
+        token_count = len(enc.encode(request.text))
+    except Exception:
+        # Fallback: rough estimate by character count / 4
+        token_count = max(1, len(request.text) // 4)
+
+    model_name = request.model or "cl100k_base"
+    return TokenizeResponse(token_count=token_count, model=model_name)

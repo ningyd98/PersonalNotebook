@@ -4,7 +4,7 @@
 
 ## 概述
 
-Personal-KB 是一个支持本地/私有化部署的个人知识库系统。Phase 1.5 完成了完整的基础闭环：**创建知识库 → 上传文档 → 异步解析(7步DAG) → 向量索引 → RAG问答 → 引用溯源 → 会话管理 → 反馈收集**。
+Personal-KB 是一个支持本地/私有化部署的个人知识库系统。Phase 3 完成了多模态解析闭环：**创建知识库 → 上传文档 → 异步解析(7步DAG) → 向量索引 → RAG问答 → 引用溯源 → 会话管理 → 反馈收集**，支持 Markdown/PDF/DOCX/PPTX/LaTeX/音频/视频 等多模态数据接入。
 
 ### 技术栈
 
@@ -15,16 +15,18 @@ Personal-KB 是一个支持本地/私有化部署的个人知识库系统。Phas
 | 异步任务 | Redis + Celery (7步 DAG)                                 |
 | 存储     | PostgreSQL 16 + MinIO                                    |
 | 向量检索 | Qdrant                                                   |
-| 模型服务 | model-gateway (Ollama / vLLM / OpenAI-compatible)        |
+| 模型服务 | model-gateway (Ollama / vLLM / OpenAI-compatible / DashScope) |
 
 ### 部署模式
 
-PersonalNotebook 支持两种模式：
+PersonalNotebook 支持四种模式：
 
 | 模式 | 生成模型 | 检索/索引 | 数据隐私 |
 |------|---------|----------|---------|
-| **Local** | 本地 Ollama (qwen2.5:7b) | 本地 Core | 全本地 |
-| **Hybrid** | DeepSeek API (deepseek-v4-flash) | 本地 Core | evidence chunks 发送到 API |
+| **Local** | 本地 Ollama (qwen3:8b) | 本地 Core | 全本地 |
+| **DashScope** | 阿里云 DashScope (qwen-plus) | 本地 Core | evidence chunks 发送到 DashScope |
+| **Hybrid (DeepSeek)** | DeepSeek API (deepseek-v4-flash) | 本地 Core | evidence chunks 发送到 API |
+| **vLLM** | 自托管 vLLM | 本地 Core | 全本地 |
 
 详见 [docs/model.md](docs/model.md)。
 
@@ -32,7 +34,8 @@ PersonalNotebook 支持两种模式：
 
 | 模式 | LLM | Embedding | Rerank |
 |------|-----|-----------|--------|
-| Local | qwen2.5:7b | bge-m3 | qwen3-reranker-0.6b |
+| Local | qwen3:8b | bge-m3 | qwen3-reranker-0.6b |
+| DashScope | qwen-plus | text-embedding-v3 | gte-rerank |
 | Hybrid | deepseek-v4-flash | text-embedding-3-small | deepseek-v4-flash |
 
 ## 环境要求
@@ -44,6 +47,7 @@ PersonalNotebook 支持两种模式：
 | Docker         | 24.0+    | 基础服务 (PostgreSQL/Redis/Qdrant/MinIO) |
 | Docker Compose | 2.0+     | 一键启动                                 |
 | Ollama         | latest   | 本地 LLM 服务 (可选)                     |
+| ffmpeg         | latest   | 音视频解析 (可选)                        |
 
 ## 从零到问答：完整步骤
 
@@ -243,7 +247,7 @@ personal-kb/
 │   │   ├── schemas/   # Pydantic 模式
 │   │   ├── services/  # 业务服务
 │   │   │   ├── connectors/  # 数据源 (Upload/Local/NAS/Obsidian)
-│   │   │   ├── parsers/     # 解析器 (Markdown/TXT/PDF/Fallback)
+│   │   │   ├── parsers/     # 解析器 (Markdown/TXT/PDF/DOCX/PPTX/LaTeX/Audio/Video/Fallback)
 │   │   │   ├── chunking/    # 智能切片
 │   │   │   ├── retrieval/   # 多路检索
 │   │   │   ├── rerank/      # 重排序 + EvidencePack
@@ -252,7 +256,7 @@ personal-kb/
 │   ├── alembic/       # 数据库迁移
 │   └── tests/         # 测试
 ├── model-gateway/     # 模型网关
-│   ├── providers/     # Ollama/vLLM/OpenAI 适配器
+│   ├── providers/     # Ollama/vLLM/OpenAI/DashScope 适配器
 │   └── main.py
 ├── infra/             # Docker Compose + Nginx + PostgreSQL
 ├── scripts/           # 导入/重建索引/导出数据脚本
@@ -283,7 +287,20 @@ open http://localhost:9001
 
 ## 开发阶段
 
-### Phase 2A (当前) ✅
+### Phase 3 ✅
+
+- ✅ DOCX 解析器 (python-docx，含标题/段落/表格/图片/批注/脚注/超链接)
+- ✅ PPTX 解析器 (python-pptx，含 slide/表格/图片/notes)
+- ✅ LaTeX 解析器 (正则解析，含章节/公式/定理/图表/引用)
+- ✅ 音频解析器 (ffmpeg + faster-whisper ASR，30~90秒分段)
+- ✅ 视频解析器 (ffmpeg 音频抽取 + ASR + 关键帧抽取)
+- ✅ DashScope Provider (通义千问 Chat/Embedding + 专用 Rerank API)
+- ✅ Tokenize 端点 (tiktoken cl100k_base)
+- ✅ 文档详情 API (blocks/chunks/assets/tables/quality-report)
+- ✅ 导出脚本 (SFT 微调 + Reranker 微调数据集)
+- ✅ 导入选项 (快速解析/精准解析/OCR模式/多模态增强)
+
+### Phase 2E ✅
 
 - ✅ 前端管理台 7 页面 (Dashboard/KB/Documents/Chat/Debug/Eval/Status)
 - ✅ Debug Trace 页 (dense/rerank/EvidencePack/claims 可视化)
@@ -293,14 +310,7 @@ open http://localhost:9001
 - ✅ 文档状态机 + 版本管理
 - ✅ Enhanced EvidencePack + 多因子拒答
 
-### Phase 1.7 ✅
-
-- ✅ 状态机 + 双缓冲 reindex + active_version
-
-### Phase 2 (规划)
-
-- DOCX/PPTX/XLSX/LaTeX/Image 解析器
-- Query Rewriter + Hybrid Search + BM25
+### Phase 2A ✅
 
 ## 故障排查
 
@@ -312,6 +322,9 @@ open http://localhost:9001
 | Chat 返回"未找到可靠依据"        | 确认文档状态为 READY，active_version > 0                     |
 | 前端上传失败                     | 检查 MinIO bucket `kb-assets` 是否存在                     |
 | `MatchValue(is_active)` 无结果 | 旧数据无 is_active 字段，需 `POST /kbs/{id}/reindex`       |
+| 音视频解析失败                   | 确认 ffmpeg 已安装：`ffmpeg -version`                       |
+| ASR 不可用                       | 安装 faster-whisper：`pip install faster-whisper`           |
+| DashScope 连接失败               | 检查 DASHSCOPE_API_KEY 是否已设置                           |
 
 ## E2E 验收
 

@@ -15,6 +15,8 @@ settings = get_settings()
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # 确保所有解析器被注册
+    import app.services.parsers  # noqa: F401
     logger.info(f"Starting {settings.PROJECT_NAME} v0.2.0")
     yield
     logger.info(f"Shutting down {settings.PROJECT_NAME}")

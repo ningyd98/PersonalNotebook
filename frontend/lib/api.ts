@@ -33,6 +33,10 @@ export const docApi = {
   reparse: (id: string) => apiFetch(`/api/documents/${id}/reparse`, { method: "POST" }),
   blocks: (id: string) => apiFetch(`/api/documents/${id}/blocks`),
   chunks: (id: string) => apiFetch(`/api/documents/${id}/chunks`),
+  assets: (id: string) => apiFetch(`/api/documents/${id}/assets`),
+  tables: (id: string) => apiFetch(`/api/documents/${id}/tables`),
+  qualityReport: (id: string) => apiFetch(`/api/documents/${id}/quality-report`),
+  reembed: (id: string) => apiFetch(`/api/documents/${id}/reembed`, { method: "POST" }),
 };
 
 // Chat
@@ -41,4 +45,20 @@ export const chatApi = {
   conversations: () => apiFetch("/api/conversations"),
   feedback: (msgId: string, data: any) =>
     apiFetch(`/api/messages/${msgId}/feedback`, { method: "POST", body: JSON.stringify(data) }),
+};
+
+// Evaluation
+export const evalApi = {
+  listSuites: () => apiFetch("/api/eval/suites"),
+  getSuite: (id: string) => apiFetch(`/api/eval/suites/${id}`),
+  createSuite: (data: any) => apiFetch("/api/eval/suites", { method: "POST", body: JSON.stringify(data) }),
+  deleteSuite: (id: string) => apiFetch(`/api/eval/suites/${id}`, { method: "DELETE" }),
+  listRuns: (suiteId?: string) => apiFetch(`/api/eval/runs${suiteId ? `?suite_id=${suiteId}` : ""}`),
+  getRun: (id: string) => apiFetch(`/api/eval/runs/${id}`),
+  startRun: (data: any) => apiFetch("/api/eval/runs", { method: "POST", body: JSON.stringify(data) }),
+  listCases: (suiteId: string) => apiFetch(`/api/eval/suites/${suiteId}/cases`),
+  createCase: (suiteId: string, data: any) =>
+    apiFetch(`/api/eval/suites/${suiteId}/cases`, { method: "POST", body: JSON.stringify(data) }),
+  importCases: (suiteId: string, data: any) =>
+    apiFetch(`/api/eval/suites/${suiteId}/import`, { method: "POST", body: JSON.stringify(data) }),
 };
