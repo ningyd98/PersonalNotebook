@@ -194,33 +194,50 @@ class ArchiveParser(BaseParser):
 
     @staticmethod
     def _extract_zip(path: Path, target_dir: str) -> bool:
-        """解压 ZIP 文件"""
+        """解压 ZIP 文件（逐个文件安全提取，防止 zip slip）"""
         with zipfile.ZipFile(str(path), "r") as zf:
-            # 安全检查：防止 zip slip 攻击
             for member in zf.namelist():
+                # Skip directories
+                if member.endswith("/"):
+                    continue
+                # Security check: prevent zip slip
                 member_path = os.path.join(target_dir, member)
-                if not os.path.abspath(member_path).startswith(os.path.abspath(target_dir)):
+                if not os.path.abspath(member_path).startswith(os.path.abspath(target_dir) + os.sep):
                     logger.warning(f"Zip slip detected: {member}, skipping")
                     continue
-            zf.extractall(target_dir)
+                # Ensure parent directory exists
+                parent = os.path.dirname(member_path)
+                os.makedirs(parent, exist_ok=True)
+                # Extract single file
+                with zf.open(member) as src, open(member_path, "wb") as dst:
+                    dst.write(src.read())
         return True
 
     @staticmethod
     def _extract_tar(path: Path, target_dir: str) -> bool:
-        """解压 TAR 文件"""
+        """解压 TAR 文件（逐个文件安全提取，防止 tar slip）"""
         with tarfile.open(str(path), "r:") as tf:
-            # 安全检查
             for member in tf.getmembers():
+                # Skip directories
+                if not member.isfile():
+                    continue
+                # Security check: prevent tar slip
                 member_path = os.path.join(target_dir, member.name)
-                if not os.path.abspath(member_path).startswith(os.path.abspath(target_dir)):
+                if not os.path.abspath(member_path).startswith(os.path.abspath(target_dir) + os.sep):
                     logger.warning(f"Tar slip detected: {member.name}, skipping")
                     continue
-            tf.extractall(target_dir)
+                # Ensure parent directory exists
+                parent = os.path.dirname(member_path)
+                os.makedirs(parent, exist_ok=True)
+                # Extract single file
+                with tf.extractfile(member) as src, open(member_path, "wb") as dst:
+                    if src:
+                        dst.write(src.read())
         return True
 
     @staticmethod
     def _extract_tar_compressed(path: Path, target_dir: str, archive_type: str) -> bool:
-        """解压压缩的 TAR 文件（.tar.gz, .tar.bz2, .tar.xz）"""
+        """解压压缩的 TAR 文件（.tar.gz, .tar.bz2, .tar.xz），逐个文件安全提取"""
         mode_map = {
             "tar_gz": "r:gz",
             "tar_bz2": "r:bz2",
@@ -228,13 +245,22 @@ class ArchiveParser(BaseParser):
         }
         mode = mode_map.get(archive_type, "r:*")
         with tarfile.open(str(path), mode) as tf:
-            # 安全检查
             for member in tf.getmembers():
+                # Skip directories
+                if not member.isfile():
+                    continue
+                # Security check: prevent tar slip
                 member_path = os.path.join(target_dir, member.name)
-                if not os.path.abspath(member_path).startswith(os.path.abspath(target_dir)):
+                if not os.path.abspath(member_path).startswith(os.path.abspath(target_dir) + os.sep):
                     logger.warning(f"Tar slip detected: {member.name}, skipping")
                     continue
-            tf.extractall(target_dir)
+                # Ensure parent directory exists
+                parent = os.path.dirname(member_path)
+                os.makedirs(parent, exist_ok=True)
+                # Extract single file
+                with tf.extractfile(member) as src, open(member_path, "wb") as dst:
+                    if src:
+                        dst.write(src.read())
         return True
 
     @staticmethod

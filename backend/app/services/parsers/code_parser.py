@@ -1,6 +1,8 @@
 """Code Parser — 解析源代码文件"""
 
 import uuid
+import re
+import json
 from pathlib import Path
 from typing import Optional
 
@@ -22,6 +24,7 @@ EXT_LANG_MAP = {
     ".dart": "dart", ".elm": "elm", ".clj": "clojure", ".ex": "elixir",
     ".exs": "elixir", ".erl": "erlang", ".hs": "haskell",
     ".ml": "ocaml", ".fs": "fsharp", ".vb": "visualbasic",
+    ".json": "json", ".yaml": "yaml", ".yml": "yaml", ".toml": "toml",
 }
 
 MIME_LANG_MAP = {
@@ -82,9 +85,9 @@ class CodeParser(BaseParser):
 
             # Simple heuristic: split on top-level function/class definitions
             if language in ("python",):
-                def_pattern = __import__("re").compile(r"^(class |def |async def )\w+")
+                def_pattern = re.compile(r"^(class |def |async def )\w+")
             else:
-                def_pattern = __import__("re").compile(r"^(public |private |protected |static |class |function |func |fn |def )")
+                def_pattern = re.compile(r"^(public |private |protected |static |class |function |func |fn |def )")
 
             for i, line in enumerate(lines, 1):
                 if def_pattern.match(line.strip()) and current_chunk:
@@ -101,6 +104,12 @@ class CodeParser(BaseParser):
                 block = flush_chunk(chunk_start_line, current_chunk)
                 if block:
                     blocks.append(block)
+
+            # Config file key-based slicing for JSON/YAML/TOML
+            if language in ("json", "yaml", "toml"):
+                config_blocks = self._parse_config_file(doc_id, content, language, filename)
+                if config_blocks:
+                    blocks.extend(config_blocks)
 
             # If no blocks were added, treat entire file as one code block
             if len(blocks) <= 1:
@@ -138,6 +147,43 @@ class CodeParser(BaseParser):
         except Exception as e:
             logger.error(f"Code parsing failed: {e}")
             return self._fallback_parse(file_path)
+
+    @staticmethod
+    def _parse_config_file(doc_id: str, content: str, language: str, filename: str) -> list[UDRBlock]:
+        """Parse JSON/YAML/TOML config files by top-level keys"""
+        config_blocks: list[UDRBlock] = []
+        try:
+            if language == "json":
+                data = json.loads(content)
+            elif language == "yaml":
+                try:
+                    import yaml
+                    data = yaml.safe_load(content)
+                except ImportError:
+                    return config_blocks
+            elif language == "toml":
+                try:
+                    import tomllib
+                except ImportError:
+                    try:
+                        import tomli as tomllib
+                    except ImportError:
+                        return config_blocks
+                data = tomllib.loads(content)
+            else:
+                return config_blocks
+
+            if isinstance(data, dict):
+                for key, value in data.items():
+                    config_blocks.append(UDRBlock(
+                        block_id=f"{doc_id}_b_cfg_{key}",
+                        type="code",
+                        text=json.dumps({key: value}, ensure_ascii=False, indent=2),
+                        metadata={"language": language, "config_key": key},
+                    ))
+        except Exception as e:
+            logger.debug(f"Config file key-slicing failed for {filename}: {e}")
+        return config_blocks
 
     @staticmethod
     def _fallback_parse(file_path: str) -> UnifiedDocument:

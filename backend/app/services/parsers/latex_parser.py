@@ -31,6 +31,31 @@ class LatexParser(BaseParser):
             # Remove comments
             content_no_comments = re.sub(r'(?<!\\)%.*$', '', content, flags=re.MULTILINE)
 
+            # Extract equations
+            for eq_match in re.finditer(r'\\begin\{equation\*?\}(.*?)\\end\{equation\*?\}', content_no_comments, re.DOTALL):
+                blocks.append(UDRBlock(
+                    block_id=f"{doc_id}_b{len(blocks):04d}",
+                    type="equation",
+                    text=eq_match.group(0),
+                    metadata={"source": "latex_equation"},
+                ))
+
+            # Extract theorem environments
+            theorem_envs = ["theorem", "definition", "lemma", "proof", "corollary", "proposition"]
+            for env in theorem_envs:
+                for m in re.finditer(rf'\\begin\{{{env}\}}(.*?)\\end\{{{env}\}}', content_no_comments, re.DOTALL):
+                    blocks.append(UDRBlock(
+                        block_id=f"{doc_id}_b{len(blocks):04d}",
+                        type="annotation",
+                        text=m.group(0),
+                        metadata={"env_type": env},
+                    ))
+
+            # Extract labels, refs, cites
+            labels = re.findall(r'\\label\{([^}]*)\}', content_no_comments)
+            refs = re.findall(r'\\ref\{([^}]*)\}', content_no_comments)
+            cites = re.findall(r'\\cite\{([^}]*)\}', content_no_comments)
+
             # Extract title
             title_match = re.search(r'\\title\{([^}]*)\}', content_no_comments)
             title = title_match.group(1) if title_match else filename
@@ -105,7 +130,12 @@ class LatexParser(BaseParser):
                     "mime_type": "application/x-latex",
                     "source_uri": str(path.absolute()),
                 },
-                metadata={"title": title},
+                metadata={
+                    "title": title,
+                    "labels": labels,
+                    "refs": refs,
+                    "cites": cites,
+                },
                 blocks=blocks,
             )
 

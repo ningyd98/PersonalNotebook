@@ -2,6 +2,9 @@
 
 import uuid
 import hashlib
+import os
+import subprocess
+import tempfile
 from pathlib import Path
 from typing import Optional
 
@@ -166,6 +169,48 @@ class VideoParser(BaseParser):
                     logger.warning("ffmpeg not installed; keyframe extraction skipped")
                 except Exception as e:
                     logger.warning(f"Keyframe extraction failed: {e}")
+
+            # ASR transcription if requested
+            use_asr = options.get("audio_transcription", False) or options.get("transcribe", False)
+            if use_asr:
+                try:
+                    # Extract audio track with ffmpeg
+                    audio_tmp = tempfile.NamedTemporaryFile(suffix=".wav", delete=False)
+                    audio_tmp_path = audio_tmp.name
+                    audio_tmp.close()
+
+                    subprocess.run(
+                        ["ffmpeg", "-i", file_path, "-vn", "-acodec", "pcm_s16le",
+                         "-ar", "16000", "-ac", "1", audio_tmp_path],
+                        capture_output=True, timeout=120,
+                    )
+
+                    if os.path.getsize(audio_tmp_path) > 0:
+                        from faster_whisper import WhisperModel
+                        model = WhisperModel("base", device="cpu", compute_type="int8")
+                        segments, info = model.transcribe(audio_tmp_path, language="zh")
+                        for segment in segments:
+                            blocks.append(UDRBlock(
+                                block_id=f"{doc_id}_b{len(blocks):04d}",
+                                type="transcript",
+                                text=segment.text.strip(),
+                                start_time=segment.start,
+                                end_time=segment.end,
+                                metadata={"source": "faster_whisper", "language": info.language},
+                            ))
+
+                    # Cleanup audio temp file
+                    try:
+                        os.unlink(audio_tmp_path)
+                    except Exception:
+                        pass
+
+                except ImportError:
+                    logger.warning("faster-whisper not installed; video ASR skipped")
+                except FileNotFoundError:
+                    logger.warning("ffmpeg not installed; video ASR skipped")
+                except Exception as e:
+                    logger.warning(f"Video ASR transcription failed: {e}")
 
             return UnifiedDocument(
                 document_id=doc_id,

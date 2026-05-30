@@ -107,29 +107,22 @@ class AudioParser(BaseParser):
             use_transcription = options.get("audio_transcription", False) or options.get("transcribe", False)
             if use_transcription:
                 try:
-                    import whisper
-                    model = whisper.load_model("base")
-                    result = model.transcribe(file_path)
-                    transcript = result.get("text", "").strip()
-                    if transcript:
+                    from faster_whisper import WhisperModel
+                    model = WhisperModel("base", device="cpu", compute_type="int8")
+                    segments, info = model.transcribe(file_path, language="zh")
+                    transcript = ""
+                    for segment in segments:
+                        transcript += segment.text
                         blocks.append(UDRBlock(
-                            block_id=f"{doc_id}_b0001",
+                            block_id=f"{doc_id}_b{len(blocks):04d}",
                             type="transcript",
-                            text=transcript,
-                            metadata={"source": "whisper", "language": result.get("language", "")},
+                            text=segment.text.strip(),
+                            start_time=segment.start,
+                            end_time=segment.end,
+                            metadata={"source": "faster_whisper", "language": info.language},
                         ))
-                        # Add segments
-                        for seg in result.get("segments", []):
-                            blocks.append(UDRBlock(
-                                block_id=f"{doc_id}_b{len(blocks):04d}",
-                                type="paragraph",
-                                text=seg.get("text", "").strip(),
-                                start_time=seg.get("start"),
-                                end_time=seg.get("end"),
-                                metadata={"segment_index": seg.get("id", 0)},
-                            ))
                 except ImportError:
-                    logger.warning("whisper not installed; audio transcription skipped")
+                    logger.warning("faster-whisper not installed; audio transcription skipped")
                 except Exception as e:
                     logger.warning(f"Audio transcription failed: {e}")
 
