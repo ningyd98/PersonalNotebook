@@ -1,105 +1,174 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef, useCallback } from "react";
 import {
   Send, Loader2, FileText, Image, Video, FileCode, Table2,
-  AlertCircle, ThumbsUp, ThumbsDown, MessageSquare, Plus,
+  ThumbsUp, ThumbsDown, MessageSquare, Plus, PanelLeftClose, PanelLeft,
+  ChevronDown, AlertTriangle,
 } from "lucide-react";
-import { chatApi, apiFetch } from "@/lib/api";
+import { cn } from "@/lib/utils";
+import { chatApi, kbApi } from "@/lib/api";
+import { useToast } from "@/components/layout/AppLayout";
+import { Button } from "@/components/ui/button";
+import { Card } from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
+import { ScrollArea } from "@/components/ui/scroll-area";
+import {
+  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
+} from "@/components/ui/select";
 
 interface Citation {
-  evidence_id: string; source_type: string; document_id: string;
-  filename: string; page_number?: number; slide_number?: number;
-  sheet_name?: string; cell_range?: string; section_path?: string;
-  start_time?: number; end_time?: number; score: number;
+  evidence_id: string;
+  source_type: string;
+  document_id: string;
+  filename: string;
+  page_number?: number;
+  slide_number?: number;
+  sheet_name?: string;
+  cell_range?: string;
+  section_path?: string;
+  score: number;
   content_preview: string;
 }
 
 interface Message {
-  id: string; role: "user" | "assistant"; content: string;
-  citations?: Citation[]; model_name?: string; latency_ms?: number;
-}
-
-function formatTime(seconds?: number): string {
-  if (!seconds) return "";
-  const h = Math.floor(seconds / 3600);
-  const m = Math.floor((seconds % 3600) / 60);
-  const s = Math.floor(seconds % 60);
-  return `${h.toString().padStart(2, "0")}:${m.toString().padStart(2, "0")}:${s.toString().padStart(2, "0")}`;
+  id: string;
+  role: "user" | "assistant";
+  content: string;
+  citations?: Citation[];
+  model_name?: string;
+  latency_ms?: number;
+  isRefusal?: boolean;
 }
 
 function CitationCard({ citation }: { citation: Citation }) {
+  const [expanded, setExpanded] = useState(false);
   const Icon = citation.source_type === "slide" ? Image
     : citation.source_type === "table" ? Table2
     : citation.source_type === "code" ? FileCode
     : citation.source_type === "video" ? Video : FileText;
 
-  const location = [citation.page_number && `第${citation.page_number}页`,
-    citation.slide_number && `第${citation.slide_number}页幻灯片`,
+  const location = [
+    citation.page_number && `第${citation.page_number}页`,
+    citation.slide_number && `幻灯片${citation.slide_number}`,
     citation.sheet_name && `Sheet「${citation.sheet_name}」`,
     citation.section_path,
   ].filter(Boolean).join(" · ");
 
   return (
-    <div className="bg-muted/50 rounded-md p-3 space-y-1 text-sm border">
+    <Card className="p-3 text-sm">
       <div className="flex items-center gap-2 text-muted-foreground">
         <Icon className="h-4 w-4" />
-        <span className="font-medium text-foreground">{citation.filename}</span>
-        <span className="text-xs bg-primary/10 text-primary px-1.5 py-0.5 rounded">
+        <span className="font-medium text-foreground truncate">{citation.filename}</span>
+        <Badge variant="outline" className="text-[10px] ml-auto">
           {(citation.score * 100).toFixed(0)}%
-        </span>
+        </Badge>
       </div>
-      {location && <p className="text-xs text-muted-foreground">{location}</p>}
-      <p className="text-xs text-muted-foreground line-clamp-2">{citation.content_preview}</p>
+      {location && <p className="text-xs text-muted-foreground mt-1">{location}</p>}
+      <button
+        onClick={() => setExpanded(!expanded)}
+        className="text-xs text-brand hover:underline mt-1"
+      >
+        {expanded ? "收起" : "展开详情"}
+      </button>
+      {expanded && (
+        <p className="text-xs text-muted-foreground mt-1 whitespace-pre-wrap">
+          {citation.content_preview}
+        </p>
+      )}
+    </Card>
+  );
+}
+
+function ChatMessage({ msg, onFeedback }: { msg: Message; onFeedback: (id: string, rating: number) => void }) {
+  const isUser = msg.role === "user";
+  return (
+    <div className={cn("flex gap-3 animate-fadeIn", isUser && "flex-row-reverse")}>
+      <div className={cn(
+        "max-w-[80%] rounded-2xl px-4 py-3",
+        isUser
+          ? "bg-brand text-brand-foreground rounded-br-md"
+          : "bg-card border rounded-bl-md"
+      )}>
+        <div className={cn("text-sm whitespace-pre-wrap leading-relaxed", !isUser && "prose-chat")}>
+          {msg.content}
+        </div>
+        {msg.isRefusal && (
+          <div className="mt-2 flex items-center gap-2 p-2 bg-orange-500/10 border border-orange-500/20 rounded-lg text-xs text-orange-600 dark:text-orange-400">
+            <AlertTriangle className="h-3.5 w-3.5 flex-shrink-0" />
+            <span>低置信拒答 — 知识库中未找到足够的可靠证据</span>
+          </div>
+        )}
+      </div>
     </div>
   );
 }
 
 export default function ChatPage() {
-  const [kbId, setKbId] = useState("");
   const [kbs, setKbs] = useState<any[]>([]);
+  const [kbId, setKbId] = useState("");
   const [conversations, setConversations] = useState<any[]>([]);
   const [convId, setConvId] = useState<string | null>(null);
   const [question, setQuestion] = useState("");
   const [messages, setMessages] = useState<Message[]>([]);
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState("");
+  const [showSidebar, setShowSidebar] = useState(true);
+  const [streamingContent, setStreamingContent] = useState("");
+  const messagesEndRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
+  const { addToast } = useToast();
 
-  // Load KB list and conversations
-  useEffect(() => {
-    apiFetch("/api/kbs?page_size=50").then(d => setKbs(d.items || [])).catch(() => {});
-    apiFetch("/api/conversations").then(d => setConversations(d.conversations || [])).catch(() => {});
+  const scrollToBottom = useCallback(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, []);
 
-  // Load conversation messages
+  useEffect(() => { scrollToBottom(); }, [messages, streamingContent, scrollToBottom]);
+
+  useEffect(() => {
+    kbApi.list({ page_size: 50 }).then(d => setKbs(d.items || [])).catch(() => {});
+    chatApi.conversations().then(d => setConversations(d.conversations || d || [])).catch(() => {});
+  }, []);
+
   const loadConversation = async (id: string) => {
     try {
-      const data = await apiFetch(`/api/conversations/${id}`);
+      const data = await chatApi.getConversation(id);
       setConvId(id);
       if (data.kb_id) setKbId(data.kb_id);
       setMessages(data.messages?.map((m: any) => ({
-        id: m.id, role: m.role, content: m.content,
-        citations: m.citations_json,
-        model_name: m.model_name, latency_ms: m.latency_ms,
+        id: m.id,
+        role: m.role,
+        content: m.content,
+        citations: m.citations_json || m.citations,
+        model_name: m.model_name,
+        latency_ms: m.latency_ms,
+        isRefusal: m.content?.includes("当前知识库未找到可靠依据"),
       })) || []);
     } catch (e: any) {
-      setError(e.message);
+      addToast(e.message, "error");
     }
   };
 
   const handleSend = async () => {
-    if (!question.trim() || !kbId.trim()) return;
+    if (!question.trim() || !kbId) return;
     setLoading(true);
-    setError("");
+    setStreamingContent("");
 
-    const userMsg: Message = { id: Date.now().toString(), role: "user", content: question };
+    const userMsg: Message = {
+      id: Date.now().toString(),
+      role: "user",
+      content: question,
+    };
     setMessages(prev => [...prev, userMsg]);
     setQuestion("");
+
+    // Typing effect simulation
+    const fullQuestion = question;
+    let displayIdx = 0;
 
     try {
       const res = await chatApi.send({
         kb_id: kbId,
-        question: userMsg.content,
+        question: fullQuestion,
         top_k: 8,
         use_rerank: true,
         strict_citation: true,
@@ -107,137 +176,191 @@ export default function ChatPage() {
         conversation_id: convId || undefined,
       });
 
-      if (!convId) {
-        setConvId(res.conversation_id);
-      }
+      if (!convId) setConvId(res.conversation_id);
 
-      const assistantMsg: Message = {
-        id: res.message_id || (Date.now() + 1).toString(),
-        role: "assistant",
-        content: res.answer,
-        citations: res.citations,
-      };
-      setMessages(prev => [...prev, assistantMsg]);
+      const isRefusal = res.answer?.includes("当前知识库未找到可靠依据");
 
-      // Refresh conversations list
-      apiFetch("/api/conversations").then(d => setConversations(d.conversations || [])).catch(() => {});
+      // Simulate streaming effect
+      const answerText = res.answer || "";
+      const streamInterval = setInterval(() => {
+        displayIdx += Math.ceil(answerText.length / 20);
+        if (displayIdx >= answerText.length) {
+          displayIdx = answerText.length;
+          clearInterval(streamInterval);
+          setStreamingContent("");
+
+          const assistantMsg: Message = {
+            id: res.message_id || (Date.now() + 1).toString(),
+            role: "assistant",
+            content: answerText,
+            citations: res.citations,
+            isRefusal,
+          };
+          setMessages(prev => [...prev, assistantMsg]);
+        } else {
+          setStreamingContent(answerText.substring(0, displayIdx) + "▍");
+        }
+      }, 50);
+
+      // Refresh conversations
+      chatApi.conversations().then(d => setConversations(d.conversations || d || [])).catch(() => {});
     } catch (e: any) {
-      setError(e.message || "请求失败");
+      addToast(e.message || "请求失败", "error");
     } finally {
       setLoading(false);
     }
   };
 
-  const handleFeedback = async (msgId: string, type: string, rating: number) => {
+  const handleFeedback = async (msgId: string, rating: number) => {
     try {
-      await chatApi.feedback(msgId, { rating, error_type: type });
+      await chatApi.feedback(msgId, { rating, error_type: rating < 3 ? "not_useful" : "useful" });
+      addToast(rating >= 3 ? "感谢反馈" : "感谢反馈，我们会改进", "success");
     } catch {}
   };
 
+  const startNewConversation = () => {
+    setConvId(null);
+    setMessages([]);
+    setStreamingContent("");
+  };
+
   return (
-    <div className="flex h-[calc(100vh-3rem)] gap-4">
+    <div className="flex h-[calc(100vh-7rem)] gap-0 animate-fadeIn">
       {/* Conversation Sidebar */}
-      <div className="w-56 border-r pr-3 space-y-2 flex-shrink-0 overflow-auto">
-        <button onClick={() => { setConvId(null); setMessages([]); }}
-          className="flex items-center gap-2 px-3 py-2 w-full text-sm bg-primary text-primary-foreground rounded-md">
-          <Plus className="h-4 w-4" /> 新对话
-        </button>
-        <div className="space-y-1">
-          {conversations.map((c: any) => (
-            <button key={c.id} onClick={() => loadConversation(c.id)}
-              className={`w-full text-left px-3 py-2 rounded-md text-sm truncate ${
-                convId === c.id ? "bg-accent" : "hover:bg-accent/50"
-              }`}>
-              <MessageSquare className="h-3 w-3 inline mr-1" />
-              {c.title?.substring(0, 30) || "对话"}
-            </button>
-          ))}
+      {showSidebar && (
+        <div className="w-60 border-r flex flex-col flex-shrink-0 mr-4">
+          <Button onClick={startNewConversation} className="m-3 gap-2" size="sm">
+            <Plus className="h-4 w-4" /> 新对话
+          </Button>
+          <ScrollArea className="flex-1">
+            <div className="space-y-1 px-2 pb-2">
+              {conversations.map((c: any) => (
+                <button
+                  key={c.id}
+                  onClick={() => loadConversation(c.id)}
+                  className={cn(
+                    "w-full text-left px-3 py-2 rounded-md text-sm truncate transition-colors",
+                    convId === c.id ? "bg-accent text-accent-foreground" : "hover:bg-accent/50 text-muted-foreground"
+                  )}
+                >
+                  <MessageSquare className="h-3 w-3 inline mr-1.5" />
+                  {c.title?.substring(0, 30) || "对话"}
+                </button>
+              ))}
+            </div>
+          </ScrollArea>
         </div>
-      </div>
+      )}
 
       {/* Main Chat Area */}
       <div className="flex-1 flex flex-col min-w-0">
-        <div className="mb-4 flex items-center gap-3">
-          <select value={kbId} onChange={(e) => setKbId(e.target.value)}
-            className="px-3 py-2 border rounded-md text-sm bg-background">
-            <option value="">选择知识库</option>
-            {kbs.map((kb: any) => (
-              <option key={kb.id} value={kb.id}>{kb.name} ({kb.document_count || 0} 文档)</option>
-            ))}
-          </select>
-          {!kbId && kbs.length > 0 && (
-            <input type="text" value={kbId} onChange={(e) => setKbId(e.target.value)}
-              placeholder="或输入 KB UUID" className="px-3 py-2 border rounded-md text-sm bg-background w-48" />
-          )}
+        {/* Top bar */}
+        <div className="flex items-center gap-3 mb-4">
+          <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => setShowSidebar(!showSidebar)}>
+            {showSidebar ? <PanelLeftClose className="h-4 w-4" /> : <PanelLeft className="h-4 w-4" />}
+          </Button>
+          <Select value={kbId} onValueChange={setKbId}>
+            <SelectTrigger className="w-64 h-9">
+              <SelectValue placeholder="选择知识库" />
+            </SelectTrigger>
+            <SelectContent>
+              {kbs.map((kb: any) => (
+                <SelectItem key={kb.id} value={kb.id}>
+                  {kb.name} ({kb.document_count || 0} 文档)
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
         </div>
 
-        <div className="flex-1 overflow-auto space-y-4 mb-4">
-          {messages.length === 0 && (
-            <div className="text-center text-muted-foreground py-12">
-              <MessageSquare className="h-12 w-12 mx-auto mb-3 opacity-20" />
-              <p>选择知识库并输入问题开始问答</p>
-              <p className="text-xs mt-1">回答基于知识库证据，提供引用来源</p>
+        {/* Messages */}
+        <div className="flex-1 overflow-auto space-y-4 px-1">
+          {messages.length === 0 && !loading && (
+            <div className="flex items-center justify-center h-full text-center text-muted-foreground">
+              <div>
+                <MessageSquare className="h-12 w-12 mx-auto mb-3 opacity-20" />
+                <p className="font-medium">选择知识库并输入问题开始问答</p>
+                <p className="text-xs mt-1">回答基于知识库证据，提供引用来源</p>
+              </div>
             </div>
           )}
 
           {messages.map((msg) => (
-            <div key={msg.id} className={`space-y-2 ${msg.role === "user" ? "flex justify-end" : ""}`}>
-              <div className={`max-w-[85%] rounded-lg p-4 ${
-                msg.role === "user" ? "bg-primary text-primary-foreground ml-auto" : "bg-card border"
-              }`}>
-                <div className="text-sm whitespace-pre-wrap leading-relaxed">{msg.content}</div>
-                {msg.role === "assistant" && msg.content?.includes("当前知识库未找到可靠依据") && (
-                  <div className="mt-2 p-2 bg-orange-50 border border-orange-200 rounded text-xs text-orange-700">
-                    ⚠️ 低置信拒答 — 知识库中未找到足够的可靠证据。建议补充相关文档后重试。
-                  </div>
-                )}
-              </div>
-
-              {msg.citations && msg.citations.length > 0 && (
-                <div className="space-y-2 ml-4">
-                  <p className="text-xs font-medium text-muted-foreground">引用来源 ({msg.citations.length})</p>
+            <div key={msg.id}>
+              <ChatMessage msg={msg} onFeedback={handleFeedback} />
+              {msg.role === "assistant" && msg.citations && msg.citations.length > 0 && (
+                <div className="mt-2 ml-0 space-y-2">
+                  <button className="flex items-center gap-1 text-xs font-medium text-muted-foreground hover:text-foreground">
+                    <ChevronDown className="h-3 w-3" />
+                    引用来源 ({msg.citations.length})
+                  </button>
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
-                    {msg.citations.map((c) => <CitationCard key={c.evidence_id} citation={c} />)}
+                    {msg.citations.map((c) => (
+                      <CitationCard key={c.evidence_id} citation={c} />
+                    ))}
                   </div>
                 </div>
               )}
-
               {msg.role === "assistant" && msg.id && (
-                <div className="flex items-center gap-2 ml-4">
-                  <button onClick={() => handleFeedback(msg.id, "useful", 4)}
-                    className="text-muted-foreground hover:text-green-500 p-1"><ThumbsUp className="h-3.5 w-3.5" /></button>
-                  <button onClick={() => handleFeedback(msg.id, "not_useful", 1)}
-                    className="text-muted-foreground hover:text-red-500 p-1"><ThumbsDown className="h-3.5 w-3.5" /></button>
+                <div className="flex items-center gap-1 mt-1 ml-0">
+                  <Button variant="ghost" size="icon" className="h-7 w-7 text-muted-foreground hover:text-green-500"
+                    onClick={() => handleFeedback(msg.id, 4)}>
+                    <ThumbsUp className="h-3.5 w-3.5" />
+                  </Button>
+                  <Button variant="ghost" size="icon" className="h-7 w-7 text-muted-foreground hover:text-red-500"
+                    onClick={() => handleFeedback(msg.id, 1)}>
+                    <ThumbsDown className="h-3.5 w-3.5" />
+                  </Button>
                 </div>
               )}
             </div>
           ))}
 
-          {error && (
-            <div className="flex items-center gap-2 text-red-500 text-sm p-3 bg-red-50 rounded-md">
-              <AlertCircle className="h-4 w-4" />{error}
+          {/* Streaming content */}
+          {streamingContent && (
+            <div className="flex gap-3">
+              <div className="max-w-[80%] rounded-2xl rounded-bl-md px-4 py-3 bg-card border">
+                <div className="text-sm whitespace-pre-wrap leading-relaxed prose-chat">
+                  {streamingContent}
+                </div>
+              </div>
             </div>
           )}
-          {loading && (
+
+          {loading && !streamingContent && (
             <div className="flex items-center gap-2 text-muted-foreground text-sm p-3">
-              <Loader2 className="h-4 w-4 animate-spin" />正在检索并生成回答...
+              <Loader2 className="h-4 w-4 animate-spin" /> 正在检索并生成回答...
             </div>
           )}
+
+          <div ref={messagesEndRef} />
         </div>
 
-        <div className="border-t pt-4 pb-6">
+        {/* Input */}
+        <div className="border-t pt-4 mt-4">
           <div className="flex gap-2">
-            <input type="text" value={question} onChange={(e) => setQuestion(e.target.value)}
-              onKeyDown={(e) => e.key === "Enter" && handleSend()}
+            <input
+              ref={inputRef}
+              type="text"
+              value={question}
+              onChange={(e) => setQuestion(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && !e.shiftKey && handleSend()}
               placeholder="输入问题，例如：Q-learning 和 SARSA 的区别是什么？"
-              className="flex-1 px-4 py-3 border rounded-lg bg-background text-sm focus:outline-none focus:ring-2 focus:ring-primary"
-              disabled={loading} />
-            <button onClick={handleSend}
-              disabled={loading || !question.trim() || !kbId.trim()}
-              className="px-4 py-3 bg-primary text-primary-foreground rounded-lg hover:bg-primary/90 disabled:opacity-50">
-              <Send className="h-4 w-4" />
-            </button>
+              className="flex-1 px-4 py-3 border rounded-xl bg-background text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+              disabled={loading || !kbId}
+            />
+            <Button
+              onClick={handleSend}
+              disabled={loading || !question.trim() || !kbId}
+              size="icon"
+              className="h-12 w-12 rounded-xl"
+            >
+              <Send className="h-5 w-5" />
+            </Button>
           </div>
+          <p className="text-xs text-muted-foreground mt-2 text-center">
+            回答基于知识库证据，未经证实的陈述将被标记
+          </p>
         </div>
       </div>
     </div>
