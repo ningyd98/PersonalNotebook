@@ -5,7 +5,7 @@
 - 仓库: https://github.com/ningyd98/PersonalNotebook.git
 - 技术栈: FastAPI + Next.js + Flutter + PostgreSQL + Qdrant + MinIO + Redis + Celery
 
-## 当前阶段: Phase 3 完成 + 代码审查修复 + macOS安装包 (2026-05-30)
+## 当前阶段: Phase 3 完成 + 前端重构 + macOS安装包 (2026-05-30)
 
 ### 已实现的解析器
 Markdown, TXT, PDF, Fallback (Phase 1)
@@ -18,6 +18,15 @@ DOCX, PPTX, XLSX, LaTeX, Image, Code, Archive, Audio, Video (Phase 3)
 - code_parser: import re 规范化 + JSON/YAML/TOML支持
 - video_parser: 添加 ASR 转写
 - archive_parser: zip/tar slip 安全修复
+
+### 前端重构 (2026-05-30 第三轮)
+- 设计系统: 完整CSS变量(亮色/暗色), 语义化颜色, 动画系统, 文件类型颜色
+- UI组件库: 18个(Button/Badge/Card/Dialog/Tabs/Tooltip/Progress/Select/...)
+- 布局组件: 4个(AppLayout/Sidebar/Header/CommandPalette)
+- Hooks: 3个(useTheme/useDebounce/useKeyboard)
+- 7个页面全部重写使用新组件库
+- API客户端增强: ApiError, 拦截器, apiUpload, healthApi
+- 可折叠侧边栏, 暗色模式, Cmd+K命令面板, Toast通知
 
 ### macOS 一键安装包
 - PersonalNotebook.app + DMG
